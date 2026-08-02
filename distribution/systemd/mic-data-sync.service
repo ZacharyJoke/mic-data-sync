@@ -1,0 +1,22 @@
+# mic-data-sync systemd 示例
+# 安装：复制到 /etc/systemd/system/mic-data-sync.service，systemctl daemon-reload && enable --now
+[Unit]
+Description=mic-data-sync data synchronization service
+After=network.target
+
+[Service]
+Type=simple
+# 建议使用独立账号（root 可运行但不推荐）：User=mic
+User=mic
+Environment=MIC_SYNC_ROLES=source,sink
+Environment=MIC_SYNC_SERVER_PORT=19090
+Environment=MIC_SYNC_DATA_DIR=/opt/mic-data-sync/data
+# 管理员初始化与密钥通过 Environment 或 EnvironmentFile 提供：
+# EnvironmentFile=/etc/mic-data-sync.env
+ExecStart=/usr/bin/java -jar /opt/mic-data-sync/mic-data-sync-server-0.1.0-SNAPSHOT.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

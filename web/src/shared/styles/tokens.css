@@ -1,0 +1,87 @@
+:root {
+  color-scheme: light;
+  --mic-primary: #1e40af;
+  --mic-primary-hover: #1d4ed8;
+  --mic-primary-soft: #eff6ff;
+  --mic-nav: #172033;
+  --mic-nav-hover: #25314a;
+  --mic-nav-text: #ffffff;
+  --mic-nav-text-muted: #cbd5e1;
+  --mic-nav-accent: #93c5fd;
+  --mic-success: #087443;
+  --mic-success-soft: #ecfdf5;
+  --mic-warning: #d97706;
+  --mic-warning-text: #9a4f05;
+  --mic-warning-soft: #fff7ed;
+  --mic-danger: #dc2626;
+  --mic-danger-soft: #fef2f2;
+  --mic-neutral-soft: #f1f5f9;
+  --mic-page: #f8fafc;
+  --mic-surface: #ffffff;
+  --mic-text: #0f172a;
+  --mic-text-secondary: #475569;
+  --mic-border: #dbe3ee;
+  --mic-focus: #2563eb;
+  --mic-focus-ring: rgb(37 99 235 / 28%);
+  --mic-radius: 6px;
+  --mic-shadow: 0 1px 2px rgb(15 23 42 / 8%);
+  --mic-transition: 180ms ease;
+  --el-color-primary: var(--mic-primary);
+  --el-color-success: var(--mic-success);
+  --el-color-warning: var(--mic-warning);
+  --el-color-danger: var(--mic-danger);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--mic-text);
+  background: var(--mic-page);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--mic-text);
+  background: var(--mic-page);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+a,
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--mic-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--mic-focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

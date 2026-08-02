@@ -1,0 +1,49 @@
+# mic-data-sync 后端服务基础配置
+server:
+  # 服务端口，可通过环境变量 MIC_SYNC_SERVER_PORT 覆盖
+  port: ${MIC_SYNC_SERVER_PORT:19090}
+
+spring:
+  application:
+    name: mic-data-sync
+  datasource:
+    # 本地状态库（SQLite）；Task 5 起由 Flyway 管理迁移
+    url: '${MIC_SYNC_DB_URL:jdbc:sqlite:${MIC_SYNC_DATA_DIR:./data}/mic-data-sync.db}'
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      # SQLite 写并发有限，单连接池最稳定
+      maximum-pool-size: 1
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      # 启用 Kubernetes 探针（liveness/readiness）端点
+      probes:
+        enabled: true
+
+mic:
+  sync:
+    # 工作台统计使用的本地时区，可通过环境变量覆盖
+    timezone: ${MIC_SYNC_TIMEZONE:Asia/Shanghai}
+    # 部署角色（source/sink），可通过环境变量覆盖
+    roles: ${MIC_SYNC_ROLES:source,sink}
+    # 本地数据目录（任务数据、日志等），可通过环境变量覆盖
+    data-dir: ${MIC_SYNC_DATA_DIR:./data}
+    source:
+      # 源侧允许的最大任务数
+      max-tasks: ${MIC_SYNC_SOURCE_MAX_TASKS:10}
+      # 源侧允许的最大并发运行数
+      max-active-runs: ${MIC_SYNC_SOURCE_MAX_ACTIVE_RUNS:1}
+    sink:
+      # 单批次最大行数与负载大小
+      max-rows-per-batch: ${MIC_SYNC_SINK_MAX_ROWS_PER_BATCH:1000}
+      max-payload-bytes: ${MIC_SYNC_SINK_MAX_PAYLOAD_BYTES:16777216}
+      # HTTPS 显式跳过 TLS 校验（高风险，默认关闭）
+      tls-insecure-skip-verify: ${MIC_SYNC_SINK_TLS_INSECURE_SKIP_VERIFY:false}

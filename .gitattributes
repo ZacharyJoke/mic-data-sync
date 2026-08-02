@@ -1,0 +1,9 @@
+* text=auto
+
+# Shell 脚本统一 LF
+*.sh text eol=lf
+mvnw text eol=lf
+
+# Windows 批处理统一 CRLF
+*.bat text eol=crlf
+mvnw.cmd text eol=crlf

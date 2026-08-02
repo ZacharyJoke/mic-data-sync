@@ -1,0 +1,40 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+.codegraph/
+.cursor/
+.superpowers
+.playwright-cli
+
+# OS
+.DS_Store
+docs/.DS_Store
+
+# Build output
+**/target/
+web/dist/
+web/test-results/
+web/playwright-report/
+server/src/main/resources/static/
+node_modules/
+dist/
+output/
+*.class
+
+# Runtime data and logs
+data/
+logs/
+*.log
+
+# Local overrides
+*.local.yml
+.env
+.env.*
+
+# Internal-only documents (test environment records, screenshots)
+docs/internal/
+
+# Distribution build artifacts
+mic-data-sync-*.tar.gz
+distribution-build/

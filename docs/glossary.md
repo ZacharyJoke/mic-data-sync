@@ -1,0 +1,26 @@
+# 术语表
+
+| 术语 | 说明 |
+|---|---|
+| Source | 读取端角色，负责按任务读取源数据、切批、Spool 与发送 |
+| Sink | 接收端角色，负责校验、写入业务数据与批次回执 |
+| 实例 | 一个运行中的客户端进程，拥有唯一 `instanceId` 与角色 |
+| 端 | 控制台维护的连接身份，Source 端固定为当前实例，Sink 端可多个（本地/远程） |
+| 数据源 | 属于某个端的数据库档案（类型、JDBC URL、用户名、加密密码） |
+| 任务 | 一条同步定义：读取模式、源数据源、Sink 端、目标表、映射与写入模式 |
+| Run | 一次同步执行（首次全量、自动追赶、手动增量） |
+| Batch | Run 中的一个传输批次，含业务行、Payload Hash 与批次序号 |
+| Checkpoint | Source 已确认成功写入的最后游标，单调推进 |
+| 回执 | Sink 与业务数据同事务写入的 `mic_sync_batch_receipt` 记录 |
+| Spool | Source 本地加密保存的未确认批次，用于重试与断点恢复 |
+| Keyset 分页 | 基于有序键比较的稳定分页，不使用 OFFSET |
+| 回看窗口 | 增量默认回看已确认检查点前 10 分钟，降低晚提交漏数风险 |
+| Preflight | 读取 Source 前对 Sink、协议、实例身份与目标表写入契约的预检 |
+| Readiness | Sink 是否具备安全接收能力的状态（`READY` / `NOT_READY`） |
+| 结构漂移 | 源表或目标表结构与任务保存契约不一致 |
+| 协议版本 | Source 与 Sink 握手协商的兼容版本 |
+| Agent | 控制台向远程 Sink 端下发数据源/预检请求的通道 |
+| UPSERT | 存在则 UPDATE、不存在则 INSERT 的写入模式 |
+| INSERT_ONLY | 只追加写入、不依赖唯一 Key 的写入模式 |
+| Master Key | 用于 AES-GCM 加密本地敏感数据与 Spool 的 32 字节密钥 |
+| DBA SQL | Sink 无 DDL 权限时由数据库管理员执行的回执表初始化 SQL |
