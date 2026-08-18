@@ -9,15 +9,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * @param roles      部署角色（source/sink/source,sink）
  * @param dataDir    本地数据目录
+ * @param driverDir  JDBC 驱动目录（默认 {@code ${dataDir}/drivers}）
  * @param source     Source 侧参数
  * @param sink       Sink 侧参数
  */
 @ConfigurationProperties(prefix = "mic.sync")
-public record RoleProperties(String roles, String dataDir, Source source, Sink sink) {
+public record RoleProperties(String roles, String dataDir, String driverDir, Source source, Sink sink) {
 
     public RoleProperties {
         roles = (roles == null || roles.isBlank()) ? "source,sink" : roles;
         dataDir = (dataDir == null || dataDir.isBlank()) ? "./data" : dataDir;
+        driverDir = (driverDir == null || driverDir.isBlank()) ? dataDir + "/drivers" : driverDir;
         source = source == null ? new Source(10, 1) : source;
         sink = sink == null ? new Sink(1000, 16 * 1024 * 1024, false) : sink;
     }

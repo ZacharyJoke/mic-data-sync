@@ -1,17 +1,20 @@
 # mic-data-sync
 
-基于「Source 客户端 → Sink 客户端 → 目标数据库」两级架构的轻量数据同步工具（MVP-I1 候选版本 `0.1.0-SNAPSHOT`）。
+基于「Source 客户端 → Sink 客户端 → 目标数据库」两级架构的轻量数据同步工具（MVP 1.0 迭代版本 `0.1.0-SNAPSHOT`）。
 
 - 客户端可通过配置同时启用 Source / Sink 角色，也可以只启用其中一个；
 - 支持 KingbaseES（人大金仓）与 openGauss 之间三种方向的数据同步；
 - 支持 Table 模式与单表 SQL 模式两种读取方式；
-- 支持首次全量、自动追赶与手动增量，按批次回执安全续跑；
+- 支持首次全量、自动追赶与手动增量（含双阶段增量策略），按批次回执安全续跑；
+- 支持 UPSERT、UPSERT_NO_OVERWRITE（冲突跳过）、INSERT_ONLY 与 REPLACE_ALL（全量重导）四种写入模式，以及无主键关联表的软唯一键同步；
+- 批次网络故障自动退避重试与 UNKNOWN 批次安全恢复；
 - Web 控制台内置于客户端，提供端管理、多数据源、任务配置、运行监控与故障诊断。
 
 ## 当前状态
 
-- MVP 1.0 范围已冻结，MVP-I1 候选版本已交付（`0.1.0-SNAPSHOT`）；
+- MVP 1.0 范围已冻结，MVP-I1 候选版本已交付（`0.1.0-SNAPSHOT`），并已完成多轮修复与增强；
 - 已实现管理员登录、端管理、多数据源、Table/SQL 任务、预检启用、首次全量/手动增量、暂停/继续/安全重试、Sink Token 轮换与批次认证；
+- 分发包默认内置 openGauss / PostgreSQL JDBC 驱动；KingbaseES 驱动为商业授权组件，需按许可自备；
 - Linux x86_64 分发包与 systemd 托管样例已提供。
 
 ## 文档
@@ -50,7 +53,7 @@
 server/              Spring Boot 后端（唯一 Maven 业务模块，内置前端静态资源）
 web/                 Vue 3 前端 SPA
 scripts/             开发、验证、构建脚本
-distribution/        分发包源文件（bin/config/systemd）
+distribution/        分发包源文件（bin/config/systemd/nginx/drivers）
 distribution-build/  构建产物（可执行 JAR、文档、Linux tar.gz）
 e2e/                 三方向真实数据库端到端测试
 docs/                帮助、错误码与运维文档
@@ -59,10 +62,10 @@ docs/                帮助、错误码与运维文档
 ## 快速开始
 
 ```bash
-# 后端开发模式（默认端口 19090）
+# 后端开发模式（默认端口 19090，URL 前缀 /mic-data-sync/）
 ./scripts/dev-server.sh
 
-# 前端开发模式（Vite，代理 /api 与 /actuator 到本地后端）
+# 前端开发模式（Vite，代理 /mic-data-sync/api 与 /mic-data-sync/actuator 到本地后端）
 ./scripts/dev-web.sh
 
 # 统一验证（后端测试/打包、前端 lint/type-check/test/build/e2e）

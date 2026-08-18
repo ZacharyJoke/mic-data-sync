@@ -60,6 +60,8 @@
 | `POST` | `/api/v1/source/metadata/schemas/{schema}/tables/{table}/sample` | 样例数据（最多 20 行） |
 | `POST` | `/api/v1/source/sql/inspect` | SQL 安全校验与字段探查 |
 | `GET` | `/api/v1/target/metadata/{schema}/{table}` | 目标表结构与主键 |
+| `GET` | `/api/v1/target/metadata/schemas` | 列出 Sink 目标库可用 Schema（本地/远程） |
+| `GET` | `/api/v1/target/metadata/schemas/{schema}/tables` | 列出指定 Schema 下的目标表（本地/远程） |
 
 ## 任务
 
@@ -87,7 +89,7 @@
 | `GET` | `/api/v1/tasks/{taskId}/runs` | 任务运行历史 |
 | `GET` | `/api/v1/runs/{runId}` | 运行详情 |
 | `GET` | `/api/v1/runs/{runId}/diagnosis` | 结构化诊断 |
-| `GET` | `/api/v1/runs/{runId}/batches` | 批次列表 |
+| `GET` | `/api/v1/runs/{runId}/batches` | 批次列表（含时间水位列，历史批次为 `-`） |
 | `GET` | `/api/v1/runs/{runId}/actions` | 可用动作（按状态返回） |
 | `POST` | `/api/v1/runs/{runId}/pause` | 暂停 |
 | `POST` | `/api/v1/runs/{runId}/resume` | 继续 |

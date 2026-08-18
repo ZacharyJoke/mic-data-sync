@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import type { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
 
+import { toApiErrorInfo, type ApiResponse } from '@/api/http'
 import {
   createTask,
   enableTask,
@@ -41,7 +43,17 @@ const taskLifecycle = ref<string | null>(null)
 
 const currentStep = computed(() => store.draft.currentStep)
 const isEdit = computed(() => editTaskId !== null)
-const locked = computed(() => isEdit.value && taskLifecycle.value !== 'DRAFT')
+// 已启用/已暂停的任务可能正在或即将同步，语义字段锁定；
+// 草稿、已禁用、已阻塞任务无活动同步，允许编辑后重新启用。
+const locked = computed(
+  () => isEdit.value && (taskLifecycle.value === 'ENABLED' || taskLifecycle.value === 'PAUSED'),
+)
+
+/** 从 Axios 错误提取后端 message，缺失时使用兜底文案。 */
+function errorMessage(error: unknown, fallback: string): string {
+  const info = toApiErrorInfo(error as AxiosError<ApiResponse>)
+  return info.message || fallback
+}
 
 onMounted(async () => {
   if (!editTaskId) {
@@ -58,7 +70,7 @@ onMounted(async () => {
       readDefinition: definition,
       targetSchema: task.targetSchema ?? '',
       targetTable: task.targetTable,
-      writeMode: task.writeMode as 'UPSERT' | 'INSERT_ONLY',
+      writeMode: task.writeMode as 'UPSERT' | 'UPSERT_NO_OVERWRITE' | 'INSERT_ONLY' | 'REPLACE_ALL',
       uniqueKeys: [...task.uniqueKeys],
       fieldMappings: [...task.fieldMappings],
       remoteSinkUrl: task.remoteSinkUrl ?? '',
@@ -115,21 +127,33 @@ function toRequest() {
   }
 }
 
-async function saveDraft(): Promise<TaskItem> {
-  submitting.value = true
-  try {
-    const saved = editTaskId
-      ? await updateTask(editTaskId, toRequest())
-      : await createTask(toRequest())
-    taskId.value = saved.taskId
-    store.persist()
-    if (isEdit.value && locked.value) {
+/** 执行保存（不弹错误提示，由调用方决定如何展示失败原因）。 */
+async function persistDraft(): Promise<TaskItem> {
+  const saved = editTaskId
+    ? await updateTask(editTaskId, toRequest())
+    : await createTask(toRequest())
+  taskId.value = saved.taskId
+  store.persist()
+  if (isEdit.value) {
+    if (locked.value) {
       ElMessage.success('任务已更新')
       await router.push({ name: 'task-detail', params: { taskId: saved.taskId } })
     } else {
-      ElMessage.success('草稿已保存')
+      ElMessage.success('修改已保存')
     }
-    return saved
+  } else {
+    ElMessage.success('草稿已保存')
+  }
+  return saved
+}
+
+async function saveDraft(): Promise<void> {
+  submitting.value = true
+  try {
+    await persistDraft()
+  } catch (error) {
+    // 保存失败时把后端返回的具体原因展示给用户（如：语义字段不允许直接编辑）
+    ElMessage.error(errorMessage(error, '保存失败'))
   } finally {
     submitting.value = false
   }
@@ -146,14 +170,14 @@ async function validateAndEnable() {
       focusFirstIssue(report.issues[0])
       return
     }
-    const saved = await saveDraft()
+    const saved = await persistDraft()
     await enableTask(saved.taskId)
     store.clear()
     enabledTaskId.value = saved.taskId
     validationIssues.value = []
     ElMessage.success('任务已启用')
-  } catch {
-    ElMessage.error('预检或启用失败')
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '预检或启用失败'))
   }
 }
 
@@ -197,7 +221,7 @@ onBeforeRouteLeave(() => {
       <PageHeader :title="isEdit ? '编辑任务' : '新建任务'" />
 
       <div v-if="locked" class="task-wizard__lock" data-test="edit-lock-note">
-        任务启用后，读取定义、目标表、写入模式、唯一键和字段映射不可直接修改；
+        任务已启用或已暂停，读取定义、目标表、写入模式、唯一键和字段映射不可直接修改；
         可更新名称、Sink URL 与期望实例。
       </div>
 

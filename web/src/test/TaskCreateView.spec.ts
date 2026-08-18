@@ -13,7 +13,12 @@ const messageMock = vi.hoisted(() => ({ warning: vi.fn(), success: vi.fn(), erro
 const routerPush = vi.hoisted(() => vi.fn())
 const routeParams = vi.hoisted(() => ({ taskId: undefined as string | undefined }))
 
-vi.mock('@/api/http', () => ({ default: httpMock }))
+vi.mock('@/api/http', () => ({
+  default: httpMock,
+  toApiErrorInfo: (error: { response?: { data?: { message?: string } } }) => ({
+    message: error.response?.data?.message ?? '请求失败',
+  }),
+}))
 vi.mock('element-plus', () => ({
   ElMessage: messageMock,
   ElMessageBox: { confirm: vi.fn().mockResolvedValue(true) },
@@ -36,7 +41,7 @@ const TASK = {
   writeMode: 'UPSERT',
   uniqueKeys: ['id'],
   fieldMappings: [],
-  remoteSinkUrl: 'http://sink:19090',
+  remoteSinkUrl: 'http://sink:19090/mic-data-sync',
   expectedSinkInstanceId: null,
   createdAt: '2026-08-01T00:00:00Z',
   updatedAt: '2026-08-01T00:00:00Z',
@@ -77,7 +82,7 @@ describe('TaskCreateView', () => {
 
   it('只持久化一份不含密码和令牌的浏览器草稿', () => {
     const store = useTaskWizardStore()
-    store.patch({ name: 'patient-sync', remoteSinkUrl: 'http://sink:19090' })
+    store.patch({ name: 'patient-sync', remoteSinkUrl: 'http://sink:19090/mic-data-sync' })
     store.persist()
 
     const stored = JSON.parse(localStorage.getItem(TASK_WIZARD_STORAGE_KEY) ?? '{}')
@@ -166,6 +171,66 @@ describe('TaskCreateView', () => {
       name: 'task-detail',
       params: { taskId: TASK.taskId },
     })
+  })
+
+  it('保存被后端拒绝时展示后端返回的错误信息', async () => {
+    routeParams.taskId = TASK.taskId
+    httpMock.get.mockImplementation((url: string) => {
+      if (url === `/tasks/${TASK.taskId}`) {
+        return Promise.resolve({ data: TASK })
+      }
+      return Promise.resolve({ data: { schemas: [] } })
+    })
+    httpMock.put.mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          code: 'VALIDATION_FAILED',
+          message: '任务已启用或已暂停，语义字段不允许直接编辑，请复制或重建任务',
+          requestId: 'da15cc50-bacf-4e5e-8fb6-025b5dc6cdcb',
+          details: {},
+        },
+      },
+    })
+
+    const wrapper = await mountView(4)
+
+    await wrapper.find('[data-test="save-draft"]').trigger('click')
+    await flushPromises()
+
+    expect(httpMock.put).toHaveBeenCalledWith(
+      `/tasks/${TASK.taskId}`,
+      expect.anything(),
+    )
+    expect(messageMock.error).toHaveBeenCalledWith(
+      '任务已启用或已暂停，语义字段不允许直接编辑，请复制或重建任务',
+    )
+  })
+
+  it('编辑已禁用任务时不锁定语义字段并可保存', async () => {
+    routeParams.taskId = TASK.taskId
+    const disabledTask = { ...TASK, lifecycleStatus: 'DISABLED' }
+    httpMock.get.mockImplementation((url: string) => {
+      if (url === `/tasks/${TASK.taskId}`) {
+        return Promise.resolve({ data: disabledTask })
+      }
+      return Promise.resolve({ data: { schemas: [] } })
+    })
+    httpMock.put.mockResolvedValue({
+      data: { ...disabledTask, targetTable: 'patient_copy_v2' },
+    })
+
+    const wrapper = await mountView(4)
+
+    expect(wrapper.find('[data-test="edit-lock-note"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="validate-enable"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="save-draft"]').trigger('click')
+    await flushPromises()
+
+    expect(httpMock.put).toHaveBeenCalledWith(`/tasks/${TASK.taskId}`, expect.anything())
+    expect(messageMock.success).toHaveBeenCalledWith('修改已保存')
+    expect(routerPush).not.toHaveBeenCalled()
   })
 
   it('编辑草稿任务保留启用动作', async () => {

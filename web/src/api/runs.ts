@@ -43,6 +43,7 @@ export interface BatchItem {
   batchSequence: number
   payloadHash: string
   rowCount: number
+  timeWatermark: string | null
   status: string
   attemptCount: number
   createdAt: string

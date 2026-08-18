@@ -104,6 +104,40 @@ class TaskServiceTest {
                 new FieldMapping("name", "name"));
     }
 
+    @Test
+    void enabledOrPausedTaskRejectsSemanticFieldEdit() {
+        TaskRecord created = taskService.create(command());
+        jdbcTemplate.update("UPDATE task SET lifecycle_status = 'ENABLED' WHERE task_id = ?",
+                created.taskId().toString());
+
+        UpdateTaskCommand semanticEdit = new UpdateTaskCommand(
+                "patient-sync", null, null, null, "patient_copy_v2", null,
+                null, null, null, null, null, null, null, null, null);
+        assertThatThrownBy(() -> taskService.update(created.taskId(), semanticEdit))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("语义字段不允许直接编辑");
+
+        jdbcTemplate.update("UPDATE task SET lifecycle_status = 'PAUSED' WHERE task_id = ?",
+                created.taskId().toString());
+        assertThatThrownBy(() -> taskService.update(created.taskId(), semanticEdit))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("语义字段不允许直接编辑");
+    }
+
+    @Test
+    void disabledTaskAllowsSemanticFieldEdit() {
+        TaskRecord created = taskService.create(command());
+        jdbcTemplate.update("UPDATE task SET lifecycle_status = 'DISABLED' WHERE task_id = ?",
+                created.taskId().toString());
+
+        TaskRecord updated = taskService.update(created.taskId(), new UpdateTaskCommand(
+                "patient-sync", null, null, null, "patient_copy_v2", null,
+                null, null, null, null, null, null, null, null, null));
+
+        assertThat(updated.lifecycleStatus().name()).isEqualTo("DISABLED");
+        assertThat(updated.targetTable()).isEqualTo("patient_copy_v2");
+    }
+
     private CreateTaskCommand command() {
         TableReadDefinition readDefinition = new TableReadDefinition(
                 "public", "patient", List.of("id"), List.of(), List.of("id"), "updated_at");

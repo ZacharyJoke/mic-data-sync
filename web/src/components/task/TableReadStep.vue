@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -33,6 +33,8 @@ export interface TableReadDefinition {
   filters: FilterRow[]
   paginationKeys: string[]
   updatedTimeField: string
+  incrementalStrategy: 'TIME_WINDOW' | 'DUAL_PHASE'
+  incrementalLookbackMinutes: number
 }
 
 const OPERATORS = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'LIKE']
@@ -46,6 +48,7 @@ const loadingMetadata = ref(false)
 const testing = ref(false)
 const sample = ref<SampleResult | null>(null)
 const hydrating = ref(false)
+const columnKeyword = ref('')
 
 const form = reactive<TableReadDefinition>({
   mode: 'TABLE',
@@ -55,6 +58,8 @@ const form = reactive<TableReadDefinition>({
   filters: [],
   paginationKeys: [],
   updatedTimeField: '',
+  incrementalStrategy: 'TIME_WINDOW',
+  incrementalLookbackMinutes: 10,
 })
 
 onMounted(async () => {
@@ -74,6 +79,8 @@ onMounted(async () => {
     form.filters = (props.initial.filters ?? []).map((filter) => ({ ...filter }))
     form.paginationKeys = [...(props.initial.paginationKeys ?? [])]
     form.updatedTimeField = props.initial.updatedTimeField ?? ''
+    form.incrementalStrategy = props.initial.incrementalStrategy ?? 'TIME_WINDOW'
+    form.incrementalLookbackMinutes = props.initial.incrementalLookbackMinutes ?? 10
     await nextTick()
     hydrating.value = false
   }
@@ -88,11 +95,12 @@ watch(
       form.selectedColumns = []
       form.paginationKeys = []
       form.updatedTimeField = ''
+      columnKeyword.value = ''
     }
     metadata.value = null
     sample.value = null
+    tables.value = []
     if (!schema) {
-      tables.value = []
       return
     }
     loadingTables.value = true
@@ -114,6 +122,7 @@ watch(
       form.selectedColumns = []
       form.paginationKeys = []
       form.updatedTimeField = ''
+      columnKeyword.value = ''
     }
     metadata.value = null
     sample.value = null
@@ -123,6 +132,9 @@ watch(
     loadingMetadata.value = true
     try {
       metadata.value = await getTableMetadata(schema, table, props.dataSourceId)
+      if (!keepInitial || (props.initial?.selectedColumns ?? []).length === 0) {
+        form.selectedColumns = metadata.value?.columns.map((column) => column.name) ?? []
+      }
       if (keepInitial) {
         return
       }
@@ -172,6 +184,14 @@ function columnOptions(): ColumnInfo[] {
   return metadata.value?.columns ?? []
 }
 
+const visibleColumnOptions = computed(() => {
+  const keyword = columnKeyword.value.trim().toLowerCase()
+  if (!keyword) {
+    return columnOptions()
+  }
+  return columnOptions().filter((column) => column.name.toLowerCase().includes(keyword))
+})
+
 function toggleColumn(name: string) {
   const index = form.selectedColumns.indexOf(name)
   if (index >= 0) {
@@ -179,6 +199,14 @@ function toggleColumn(name: string) {
   } else {
     form.selectedColumns.push(name)
   }
+}
+
+function selectAllColumns() {
+  form.selectedColumns = columnOptions().map((column) => column.name)
+}
+
+function clearSelectedColumns() {
+  form.selectedColumns = []
 }
 </script>
 
@@ -204,10 +232,23 @@ function toggleColumn(name: string) {
 
     <template v-if="metadata">
       <div class="table-read-step__section">
-        <h4>同步字段（{{ form.selectedColumns.length }}/{{ columnOptions().length }}）</h4>
+        <div class="table-read-step__section-head">
+          <h4>同步字段（{{ form.selectedColumns.length }}/{{ columnOptions().length }}）</h4>
+          <div class="table-read-step__section-actions">
+            <input
+              v-model="columnKeyword"
+              type="search"
+              class="table-read-step__search"
+              placeholder="筛选字段"
+              data-test="column-filter"
+            />
+            <button type="button" data-test="select-all-columns" @click="selectAllColumns">全选</button>
+            <button type="button" data-test="clear-columns" @click="clearSelectedColumns">取消全选</button>
+          </div>
+        </div>
         <div class="table-read-step__chips">
           <button
-            v-for="column in columnOptions()"
+            v-for="column in visibleColumnOptions"
             :key="column.name"
             type="button"
             class="table-read-step__chip"
@@ -216,6 +257,7 @@ function toggleColumn(name: string) {
           >
             {{ column.name }}<span v-if="column.primaryKey" class="table-read-step__pk">PK</span>
           </button>
+          <span v-if="visibleColumnOptions.length === 0" class="table-read-step__empty">没有匹配的字段</span>
         </div>
       </div>
 
@@ -237,12 +279,13 @@ function toggleColumn(name: string) {
 
       <div class="table-read-step__grid">
         <label class="table-read-step__field">
-          分页 Key（必须为主键或唯一索引）
+          分页 Key（主键/唯一索引，或启用时实测唯一；REPLACE_ALL 可为任意分批字段）
           <select v-model="form.paginationKeys" multiple data-test="pagination-keys">
             <option v-for="column in columnOptions()" :key="column.name" :value="column.name">{{ column.name }}</option>
           </select>
           <small v-if="metadata.paginationKeySuggestions.length === 0" class="table-read-step__warn">
-            未发现稳定的主键/唯一索引，任务无法启用
+            未发现主键/唯一索引：分页键组合将在启用时校验实际唯一性；
+            若使用 REPLACE_ALL 写入模式，分页键可为任意分批字段或留空
           </small>
         </label>
 
@@ -252,6 +295,25 @@ function toggleColumn(name: string) {
             <option value="">不使用</option>
             <option v-for="column in columnOptions()" :key="column.name" :value="column.name">{{ column.name }}</option>
           </select>
+        </label>
+
+        <label class="table-read-step__field" data-test="incremental-strategy">
+          增量策略
+          <select v-model="form.incrementalStrategy">
+            <option value="TIME_WINDOW">时间窗口（默认）</option>
+            <option value="DUAL_PHASE">双阶段：主键推进新增 + 时间窗口补更新</option>
+          </select>
+          <small class="table-read-step__hint">
+            源表更新时间与主键顺序不一致时选择“双阶段”，避免增量漏掉“id 新但时间旧”的新行
+          </small>
+        </label>
+
+        <label class="table-read-step__field" data-test="incremental-lookback">
+          增量回看窗口（分钟）
+          <input v-model.number="form.incrementalLookbackMinutes" type="number" min="1" />
+          <small class="table-read-step__hint">
+            双阶段/时间窗口模式下补扫更新的时间范围，建议覆盖日常更新频率（如 1440 = 1 天）
+          </small>
         </label>
       </div>
 
@@ -309,10 +371,48 @@ function toggleColumn(name: string) {
   margin-top: 16px;
 }
 
+.table-read-step__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.table-read-step__section-head h4 {
+  margin: 0;
+}
+
+.table-read-step__section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.table-read-step__section-actions button,
+.table-read-step__search {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.table-read-step__section-actions button {
+  color: #409eff;
+  cursor: pointer;
+}
+
+.table-read-step__search {
+  width: 160px;
+}
+
 .table-read-step__chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 10px;
 }
 
 .table-read-step__chip {
@@ -371,6 +471,11 @@ function toggleColumn(name: string) {
 
 .table-read-step__warn {
   color: #e6a23c;
+}
+
+.table-read-step__empty {
+  color: #909399;
+  font-size: 13px;
 }
 
 .table-read-step__sample {

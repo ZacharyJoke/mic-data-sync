@@ -41,13 +41,20 @@ export const useSessionStore = defineStore('session', () => {
   let csrfReady = false
 
   /**
+   * 当前实例的 CSRF Cookie 名（后端 /csrf 下发，默认 XSRF-TOKEN）。
+   * 同主机多实例时各实例 Cookie 名不同，必须动态读取，不能写死。
+   */
+  const csrfCookieName = ref<string | null>(null)
+
+  /**
    * 获取 CSRF Token：写入 XSRF-TOKEN Cookie，后续 POST 由拦截器自动附带。
    */
   async function ensureCsrfToken(): Promise<void> {
     if (csrfReady) {
       return
     }
-    await http.get('/auth/csrf')
+    const response = await http.get<{ token: string; csrfCookieName?: string }>('/auth/csrf')
+    csrfCookieName.value = response.data?.csrfCookieName || 'XSRF-TOKEN'
     csrfReady = true
   }
 
@@ -88,5 +95,5 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  return { user, isLoggedIn, ensureCsrfToken, login, logout, clear }
+  return { user, isLoggedIn, csrfCookieName, ensureCsrfToken, login, logout, clear }
 })

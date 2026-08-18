@@ -22,21 +22,21 @@ SNK_PID=$(start_client sink "$SNK_DIR" 19102)
 wait_ready 19102
 CSRF_SNK=$(api_login 19102 "$WORK/snk.cookies")
 curl -s -b "$WORK/snk.cookies" -H "X-XSRF-TOKEN: $CSRF_SNK" -H 'Content-Type: application/json' \
-  -X PUT "http://127.0.0.1:19102/api/v1/database/SINK" \
+  -X PUT "http://127.0.0.1:19102/mic-data-sync/api/v1/database/SINK" \
   -d "{\"product\":\"OPEN_GAUSS\",\"jdbcUrl\":\"$E2E_TARGET_URL\",\"username\":\"$E2E_TARGET_USER\",\"password\":\"$E2E_TARGET_PASSWORD\",\"driverType\":\"opengauss\"}"
 TOKEN=$(curl -s -b "$WORK/snk.cookies" -H "X-XSRF-TOKEN: $CSRF_SNK" -X POST \
-  http://127.0.0.1:19102/api/v1/sink/token/rotate | python3 -c 'import sys,json;print(json.load(sys.stdin)["generated"])')
+  http://127.0.0.1:19102/mic-data-sync/api/v1/sink/token/rotate | python3 -c 'import sys,json;print(json.load(sys.stdin)["generated"])')
 
 # 未提交批次：回执 found=false（Source 可重发）
 echo "==> 断言：未提交批次回执 found=false"
 CODE=$(curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://127.0.0.1:19102/data/receipt/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002" \
+  "http://127.0.0.1:19102/mic-data-sync/data/receipt/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["found"])')
 [ "$CODE" = "False" ] && echo "OK：found=false" || { echo "错误：期望 found=false" >&2; exit 1; }
 
 echo "==> 故障 2：错误 Token 被拒绝（401）"
 HTTP=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong" \
-  "http://127.0.0.1:19102/data/receipt/x/y")
+  "http://127.0.0.1:19102/mic-data-sync/data/receipt/x/y")
 [ "$HTTP" = "401" ] && echo "OK：401" || { echo "错误：期望 401（实际 $HTTP）" >&2; exit 1; }
 
 echo "==> 故障 3：Source/Sink 重启恢复（观察启动日志非终态 Run 置 PAUSED）"

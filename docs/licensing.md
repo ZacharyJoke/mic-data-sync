@@ -25,7 +25,8 @@ mic-data-sync 以 [MIT License](../LICENSE) 发布。
 
 ## 数据库驱动
 
-- **openGauss JDBC**：openGauss 是开源数据库，驱动许可证以其官方仓库为准；本项目不内置驱动 JAR，由用户放入 `${dataDir}/drivers`；
+- **openGauss JDBC**：openGauss 是开源数据库，驱动许可证以其官方仓库为准；分发包默认内置推荐版本，也可替换 `${dataDir}/drivers` 下的 JAR；
+- **PostgreSQL JDBC**：BSD 许可证，用于 Vastbase 等 openGauss 兼容库，分发包默认内置；
 - **KingbaseES JDBC**：人大金仓 KingbaseES 驱动为商业授权组件，本项目不内置、不随分发包分发，使用者需从人大金仓官方渠道获取并遵守其授权条款。
 
 ## 商标与免责

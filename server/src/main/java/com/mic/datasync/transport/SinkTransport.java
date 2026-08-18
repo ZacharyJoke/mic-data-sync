@@ -24,8 +24,14 @@ public interface SinkTransport {
             String token,
             BatchPayload payload,
             List<String> uniqueKeys,
+            String writeMode,
             String payloadHash,
-            String contentEncoding) {
+            String contentEncoding,
+            byte[] transportBytes) {
+
+        public SendRequest {
+            transportBytes = transportBytes == null ? new byte[0] : transportBytes;
+        }
     }
 
     /** 发送结果（携带脱敏诊断信息）。 */

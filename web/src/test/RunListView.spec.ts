@@ -21,7 +21,7 @@ const TASK = {
   writeMode: 'UPSERT',
   uniqueKeys: ['id'],
   fieldMappings: [],
-  remoteSinkUrl: 'http://sink:19090',
+  remoteSinkUrl: 'http://sink:19090/mic-data-sync',
   expectedSinkInstanceId: null,
   createdAt: '2026-08-01T00:00:00Z',
   updatedAt: '2026-08-01T00:00:00Z',

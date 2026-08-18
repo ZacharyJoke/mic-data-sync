@@ -2,12 +2,15 @@ package com.mic.datasync.webapi;
 
 import com.mic.datasync.run.RunActionService;
 import com.mic.datasync.run.RunActionService.RunActions;
+import com.mic.datasync.run.CheckpointRepository;
+import com.mic.datasync.run.CheckpointRepository.Checkpoint;
 import com.mic.datasync.run.RunControlService;
 import com.mic.datasync.run.RunFailureService;
 import com.mic.datasync.run.RunFailureService.RunDiagnosis;
 import com.mic.datasync.run.RunQueryService;
 import com.mic.datasync.run.RunQueryService.BatchRecord;
 import com.mic.datasync.run.RunQueryService.RunQuery;
+import com.mic.datasync.run.RunEngine;
 import com.mic.datasync.run.RunService;
 import com.mic.datasync.run.RunService.RunKind;
 import com.mic.datasync.run.RunService.RunRecord;
@@ -21,6 +24,7 @@ import com.mic.datasync.source.FullSyncExecutor;
 import com.mic.datasync.source.IncrementalSyncExecutor;
 import com.mic.datasync.task.TaskService;
 import com.mic.datasync.task.TaskService.TaskRecord;
+import com.mic.datasync.task.domain.TaskDefinition.WriteMode;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -54,13 +58,15 @@ public class RunController {
     private final RunControlService runControlService;
     private final FullSyncExecutor fullSyncExecutor;
     private final IncrementalSyncExecutor incrementalSyncExecutor;
+    private final CheckpointRepository checkpointRepository;
 
     public RunController(TaskService taskService, RunService runService, RunQueryService runQueryService,
                          RunFailureService runFailureService,
                          RunActionService runActionService,
                          RunSlotGuard runSlotGuard,
                          RunControlService runControlService,
-                         FullSyncExecutor fullSyncExecutor, IncrementalSyncExecutor incrementalSyncExecutor) {
+                         FullSyncExecutor fullSyncExecutor, IncrementalSyncExecutor incrementalSyncExecutor,
+                         CheckpointRepository checkpointRepository) {
         this.taskService = taskService;
         this.runService = runService;
         this.runQueryService = runQueryService;
@@ -70,6 +76,7 @@ public class RunController {
         this.runControlService = runControlService;
         this.fullSyncExecutor = fullSyncExecutor;
         this.incrementalSyncExecutor = incrementalSyncExecutor;
+        this.checkpointRepository = checkpointRepository;
     }
 
     /** 触发首次全量（自动追赶）。 */
@@ -91,8 +98,27 @@ public class RunController {
     @PostMapping("/tasks/{taskId}/runs/incremental")
     public ResponseEntity<?> startIncremental(@PathVariable String taskId) {
         TaskRecord task = taskById(taskId);
+        if (task.writeMode() == WriteMode.REPLACE_ALL) {
+            return conflict("VALIDATION_FAILED", "REPLACE_ALL 仅支持全量同步，不允许执行手动增量操作");
+        }
+        if (task.readDefinition().updatedTimeField() == null
+                || task.readDefinition().updatedTimeField().isBlank()) {
+            return conflict("VALIDATION_FAILED", "由于没有配置更新时间字段，不允许执行手动增量操作");
+        }
+        if ((task.writeMode() != WriteMode.UPSERT
+                && task.writeMode() != WriteMode.UPSERT_NO_OVERWRITE)
+                || task.uniqueKeys().isEmpty()) {
+            return conflict("VALIDATION_FAILED", "由于没有配置唯一 Key，不允许执行手动增量操作");
+        }
         if (!task.lifecycleStatus().name().equals("ENABLED")) {
             return conflict("VALIDATION_FAILED", "任务未启用");
+        }
+        Optional<Instant> baseline = checkpointRepository.get(task.taskId())
+                .map(Checkpoint::cursorValues)
+                .flatMap(cursor -> RunEngine.parseCursorTime(cursor, task.readDefinition().updatedTimeField()));
+        if (baseline.isEmpty()) {
+            return conflict("VALIDATION_FAILED",
+                    "检查点中批次最后一行的时间为空，不允许执行手动增量操作，请先执行一次全量采集");
         }
         if (!runSlotGuard.hasSlot()) {
             return conflict(ErrorCode.GLOBAL_CONCURRENCY_LIMIT.name(), "全局并发名额已满");
@@ -325,6 +351,7 @@ public class RunController {
                 record.batchSequence(),
                 record.payloadHash(),
                 record.rowCount(),
+                record.timeWatermark(),
                 record.status(),
                 record.attemptCount(),
                 record.createdAt());
@@ -337,6 +364,7 @@ public class RunController {
             long batchSequence,
             String payloadHash,
             long rowCount,
+            String timeWatermark,
             String status,
             int attemptCount,
             String createdAt) {

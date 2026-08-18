@@ -71,6 +71,14 @@ public class RunService {
                 status.name(), Instant.now().toString(), runId.toString());
     }
 
+    /** 仅更新状态与暂停原因，不修改统计（用于重试等待等中间状态切换）。 */
+    @Transactional
+    public void updateStatusOnly(Identifiers.RunId runId, RunStatus status, String pauseReason) {
+        jdbcTemplate.update("""
+                UPDATE run SET status = ?, pause_reason = ? WHERE run_id = ?
+                """, status.name(), pauseReason, runId.toString());
+    }
+
     /** 查询运行。 */
     public Optional<RunRecord> get(Identifiers.RunId runId) {
         return queryOne("""

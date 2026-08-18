@@ -8,8 +8,9 @@
 - Node.js 20+（开发基线 22）与 npm 10+
 - Docker 20+（用于启动测试数据库）
 - 数据库 JDBC 驱动 JAR：
-  - openGauss：`opengauss-jdbc-*.jar`
-  - KingbaseES：`kingbase8-*.jar`（需要从人大金仓获取）
+  - openGauss：分发包已内置 `opengauss-jdbc-3.0.0.jar`
+  - KingbaseES：`kingbase8-8.6.0.jar`（商业授权，需从人大金仓获取后放入 `drivers/`）
+  - openGauss 兼容库（如 Vastbase）：分发包已内置 `postgresql-42.7.13.jar`
 
 ## 1. 启动测试数据库
 
@@ -48,7 +49,8 @@ export MIC_SYNC_ADMIN_PASSWORD='<强密码>'
 
 1. 「端管理」确认本地 Source 端与本地 Sink 端已就绪（`READY`）；
 2. 「数据源」分别保存 Source 与 Sink 数据源，点击「测试连接」；
-3. 把 JDBC 驱动 JAR 放入 `${MIC_SYNC_DATA_DIR}/drivers` 后重启，驱动才会被加载。
+3. 分发包已内置 openGauss / PostgreSQL 驱动；若使用 KingbaseES，把 `kingbase8-*.jar`
+   放入 `${MIC_SYNC_DATA_DIR}/drivers` 后重启，驱动才会被加载。
 
 ## 4. 创建任务并同步
 

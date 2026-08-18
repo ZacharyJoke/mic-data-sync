@@ -30,7 +30,7 @@ const ENDPOINTS = [
     id: 'sink-remote',
     name: '生产 Sink-01',
     role: 'SINK',
-    baseUrl: 'http://10.0.0.8:19090',
+    baseUrl: 'http://10.0.0.8:19090/mic-data-sync',
     instanceId: null,
     isSelf: false,
     status: 'READY',

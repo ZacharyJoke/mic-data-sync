@@ -11,9 +11,13 @@ import com.mic.datasync.database.metadata.TableMetadata;
 import com.mic.datasync.instance.InstanceService;
 import com.mic.datasync.sink.ReceiptRepository.BatchReceipt;
 import com.mic.datasync.transport.protocol.BatchPayload;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.HashSet;
@@ -30,6 +34,8 @@ import java.util.Set;
  */
 @Service
 public class BatchReceiveService {
+
+    private static final Logger log = LoggerFactory.getLogger(BatchReceiveService.class);
 
     private final DatabaseConfigService configService;
     private final ConnectionFactory connectionFactory;
@@ -56,7 +62,8 @@ public class BatchReceiveService {
     }
 
     /** 接收批次。 */
-    public ReceiveResult receive(BatchPayload payload, List<String> uniqueKeys, String payloadHash) {
+    public ReceiveResult receive(BatchPayload payload, List<String> uniqueKeys,
+                                 String writeMode, String payloadHash) {
         // 1. Sink 就绪
         if (!readinessService.readiness().ready()) {
             throw new ReceiveException(503, "SINK_NOT_READY", "Sink 未就绪，不开放数据接收");
@@ -69,10 +76,21 @@ public class BatchReceiveService {
         DatabaseConfig config = resolveTargetConfig(payload.targetDataSourceId());
         try (Connection connection = connectionFactory.open(config)) {
             TargetDatabaseAdapter adapter = adapterFactory.targetAdapter(config.databaseType());
-            return receiveWithConnection(connection, adapter, payload, uniqueKeys, payloadHash);
+            boolean skipOnConflict = "UPSERT_NO_OVERWRITE".equalsIgnoreCase(writeMode);
+            boolean replaceAll = "REPLACE_ALL".equalsIgnoreCase(writeMode);
+            boolean postgresProtocol = isPostgresProtocol(config.jdbcUrl());
+            return receiveWithConnection(connection, adapter, payload, uniqueKeys,
+                    skipOnConflict, postgresProtocol, replaceAll, payloadHash);
         } catch (ReceiveException ex) {
+            log.warn("sink 批次接收失败 batchId={} taskId={} runId={} target={}.{} code={} message={}",
+                    payload.batchId(), payload.taskId(), payload.runId(),
+                    payload.target().schema(), payload.target().table(),
+                    ex.errorCode(), ex.getMessage());
             throw ex;
         } catch (Exception ex) {
+            log.error("sink 批次接收异常 batchId={} taskId={} runId={} target={}.{}",
+                    payload.batchId(), payload.taskId(), payload.runId(),
+                    payload.target().schema(), payload.target().table(), ex);
             throw new ReceiveException(400, "VALIDATION_FAILED", "批次接收失败: " + safeMessage(ex));
         }
     }
@@ -92,12 +110,35 @@ public class BatchReceiveService {
     ReceiveResult receiveWithConnection(Connection connection, TargetDatabaseAdapter adapter,
                                         BatchPayload payload, List<String> uniqueKeys, String payloadHash)
             throws SQLException {
+        return receiveWithConnection(connection, adapter, payload, uniqueKeys, false, false, false, payloadHash);
+    }
+
+    /** 核心接收逻辑（保留兼容重载：非 REPLACE_ALL 场景）。 */
+    ReceiveResult receiveWithConnection(Connection connection, TargetDatabaseAdapter adapter,
+                                        BatchPayload payload, List<String> uniqueKeys,
+                                        boolean skipOnConflict, boolean postgresProtocol, String payloadHash)
+            throws SQLException {
+        return receiveWithConnection(connection, adapter, payload, uniqueKeys,
+                skipOnConflict, postgresProtocol, false, payloadHash);
+    }
+
+    /**
+     * 核心接收逻辑（包内可见，供测试用 mock 连接验证编排）。
+     *
+     * @param replaceAll REPLACE_ALL 模式：跳过唯一约束校验，并在首个真正写入批次
+     *                   校验目标表为空（非空拒绝，错误码 SINK_TARGET_NOT_EMPTY）
+     */
+    ReceiveResult receiveWithConnection(Connection connection, TargetDatabaseAdapter adapter,
+                                        BatchPayload payload, List<String> uniqueKeys,
+                                        boolean skipOnConflict, boolean postgresProtocol,
+                                        boolean replaceAll, String payloadHash)
+            throws SQLException {
         // 3. 目标契约校验（事务前）
         String schema = payload.target().schema();
         String table = payload.target().table();
         TableMetadata metadata = adapter.readTableMetadata(connection, schema, table);
         validateColumns(metadata, payload.columns());
-        if (uniqueKeys != null && !uniqueKeys.isEmpty()
+        if (!replaceAll && uniqueKeys != null && !uniqueKeys.isEmpty()
                 && !adapter.hasUniqueConstraint(metadata, uniqueKeys)) {
             throw new ReceiveException(409, "TARGET_UNIQUE_CONSTRAINT_MISSING",
                     "目标表不存在与唯一 Key 匹配的唯一约束");
@@ -114,12 +155,24 @@ public class BatchReceiveService {
                     "相同 Batch ID 但 Hash 不一致: " + payload.batchId());
         }
 
+        // 4.5 REPLACE_ALL 空表校验：该 Run 的首个真正写入批次校验目标表为空；
+        // 重放已确认批次（幂等命中）不进入此校验，避免误报
+        if (replaceAll && !receiptRepository.existsByRun(connection, payload.runId().toString())) {
+            long rowCount = countRows(connection, schema, table);
+            if (rowCount > 0) {
+                throw new ReceiveException(409, "SINK_TARGET_NOT_EMPTY",
+                        "REPLACE_ALL 要求目标表为空，但当前存在 " + rowCount
+                                + " 行数据；请线下清空目标表后重试");
+            }
+        }
+
         // 5. 业务写入与回执同事务
         List<String> safeUniqueKeys = uniqueKeys == null ? List.of() : uniqueKeys;
         connection.setAutoCommit(false);
         try {
             batchWriter.upsert(connection, adapter.databaseType(), schema, table,
-                    payload.columns(), safeUniqueKeys, payload.rows(), metadata);
+                    payload.columns(), safeUniqueKeys, payload.rows(), metadata,
+                    skipOnConflict, postgresProtocol);
             receiptRepository.insert(connection, new BatchReceipt(
                     payload.sourceInstanceId().toString(),
                     payload.batchId().toString(),
@@ -136,6 +189,9 @@ public class BatchReceiveService {
             } catch (SQLException rollbackEx) {
                 // 回滚失败：保留原始异常
             }
+            log.error("sink 批次写入失败并回滚 batchId={} taskId={} runId={} target={}.{} rows={}",
+                    payload.batchId(), payload.taskId(), payload.runId(),
+                    schema, table, payload.rows() == null ? 0 : payload.rows().size(), ex);
             if (ex instanceof ReceiveException receiveException) {
                 throw receiveException;
             }
@@ -153,9 +209,30 @@ public class BatchReceiveService {
         }
     }
 
+    /** 目标表行数（REPLACE_ALL 空表校验）。 */
+    private long countRows(Connection connection, String schema, String table) throws SQLException {
+        String qualified = (schema == null || schema.isBlank())
+                ? quoteIdentifier(table)
+                : quoteIdentifier(schema) + "." + quoteIdentifier(table);
+        String sql = "SELECT COUNT(*) FROM " + qualified;
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet rs = statement.executeQuery()) {
+            return rs.next() ? rs.getLong(1) : 0;
+        }
+    }
+
+    private String quoteIdentifier(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+
     private String safeMessage(Exception ex) {
         String message = ex.getMessage();
         return message == null ? ex.getClass().getSimpleName() : message;
+    }
+
+    /** jdbc:postgresql 协议视为 PostgreSQL 兼容模式（如 Vastbase），冲突语法按 PG 标准生成。 */
+    private static boolean isPostgresProtocol(String jdbcUrl) {
+        return jdbcUrl != null && jdbcUrl.startsWith("jdbc:postgresql:");
     }
 
     /** 接收结果。 */

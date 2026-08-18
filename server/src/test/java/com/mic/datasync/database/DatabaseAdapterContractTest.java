@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 四个 Reader/Writer Adapter 的最小契约测试。
@@ -65,6 +66,53 @@ class DatabaseAdapterContractTest {
     }
 
     @Test
+    void skipConflictGeneratesOnConflictDoNothing() {
+        String sql = dialect.buildUpsertSql(
+                "public", "patient", List.of("id", "name", "status"), List.of("id"),
+                Set.of(), true, null);
+        assertThat(sql).startsWith("INSERT INTO \"public\".\"patient\" (\"id\", \"name\", \"status\") VALUES (?, ?, ?)");
+        assertThat(sql).contains("ON CONFLICT DO NOTHING");
+        assertThat(sql).doesNotContain("ON CONFLICT (");
+        assertThat(sql).doesNotContain("DO UPDATE");
+    }
+
+    @Test
+    void postgresProtocolSkipConflictGeneratesOnConflictDoNothingForOpenGaussAdapter() {
+        String sql = new OpenGaussTargetAdapter().buildUpsertSql(
+                "public", "patient", List.of("id", "name", "status"), List.of("id"),
+                Set.of(), true, null, true);
+        assertThat(sql).contains("ON CONFLICT DO NOTHING");
+        assertThat(sql).doesNotContain("ON CONFLICT (");
+        assertThat(sql).doesNotContain("ON DUPLICATE");
+    }
+
+    /**
+     * 回归：目标表除配置的唯一 Key 外还有业务唯一索引（如
+     * {@code study_info_hospital_id_idx (hospital_id, study_pk)}）时，冲突跳过
+     * SQL 不得锁定单一仲裁键，否则撞到其他唯一索引会整批报错回滚。
+     */
+    @Test
+    void skipConflictOmitsArbiterWhenTargetHasAdditionalUniqueIndexes() {
+        String sql = new OpenGaussTargetAdapter().buildUpsertSql(
+                "guangdong", "study_info",
+                List.of("check_serial_num", "hospital_id", "study_pk"),
+                List.of("check_serial_num"),
+                Set.of(), true, null, true);
+        assertThat(sql).contains("ON CONFLICT DO NOTHING");
+        assertThat(sql).doesNotContain("ON CONFLICT (\"check_serial_num\")");
+        assertThat(sql).doesNotContain("ON DUPLICATE");
+    }
+
+    @Test
+    void postgresProtocolNonSkipGeneratesPostgresStyleDoUpdate() {
+        String sql = new OpenGaussTargetAdapter().buildUpsertSql(
+                "public", "patient", List.of("id", "name", "status"), List.of("id"),
+                Set.of(), false, null, true);
+        assertThat(sql).contains("ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\", \"status\" = EXCLUDED.\"status\"");
+        assertThat(sql).doesNotContain("ON DUPLICATE");
+    }
+
+    @Test
     void openGaussUpsertUsesOnDuplicateKeyUpdate() {
         String sql = new OpenGaussTargetAdapter().buildUpsertSql(
                 "mic_sync", "patient", List.of("id", "name", "status"), List.of("id"));
@@ -92,6 +140,26 @@ class DatabaseAdapterContractTest {
                 null, "audit_log", List.of("id", "message"), List.of());
         assertThat(sql).isEqualTo("INSERT INTO \"audit_log\" (\"id\", \"message\") VALUES (?, ?)");
         assertThat(sql).doesNotContain("ON DUPLICATE");
+    }
+
+    @Test
+    void openGaussSkipConflictUsesNoOpUpdateOnNonKeyColumn() {
+        String sql = new OpenGaussTargetAdapter().buildUpsertSql(
+                "mic_sync", "patient", List.of("id", "name", "status"), List.of("id"),
+                Set.of("id"), true, "status", false);
+        assertThat(sql).startsWith("INSERT INTO \"mic_sync\".\"patient\" (\"id\", \"name\", \"status\") VALUES (?, ?, ?)");
+        assertThat(sql).contains("ON DUPLICATE KEY UPDATE \"status\" = \"status\"");
+        assertThat(sql).doesNotContain("EXCLUDED");
+        assertThat(sql).doesNotContain("ON CONFLICT");
+    }
+
+    @Test
+    void openGaussSkipConflictWithoutNoOpColumnRejects() {
+        assertThatThrownBy(() -> new OpenGaussTargetAdapter().buildUpsertSql(
+                "mic_sync", "patient", List.of("id", "name"), List.of("id"),
+                Set.of("id"), true, null, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("无操作更新列");
     }
 
     @Test

@@ -43,6 +43,7 @@ public class EndpointService {
     private final SinkHandshakeService handshakeService;
     private final ObjectMapper objectMapper;
     private final int serverPort;
+    private final String contextPath;
     private final HttpClient httpClient =
             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
@@ -51,13 +52,35 @@ public class EndpointService {
                            InstanceService instanceService,
                            SinkHandshakeService handshakeService,
                            ObjectMapper objectMapper,
-                           @Value("${server.port:19090}") int serverPort) {
+                           @Value("${server.port:19090}") int serverPort,
+                           @Value("${server.servlet.context-path:}") String contextPath) {
         this.jdbcTemplate = jdbcTemplate;
         this.secretCipher = secretCipher;
         this.instanceService = instanceService;
         this.handshakeService = handshakeService;
         this.objectMapper = objectMapper;
         this.serverPort = serverPort;
+        this.contextPath = contextPath;
+    }
+
+    /**
+     * 本地默认访问地址：端口 + context-path。
+     *
+     * <p>应用整体挂在 /mic-data-sync 前缀下，self-sink 探活回写与批次认证兜底
+     * 都必须带上 context-path，否则批次发送会打到 404。</p>
+     */
+    public static String localBaseUrl(int serverPort, String contextPath) {
+        String suffix = contextPath == null ? "" : contextPath.trim();
+        if (suffix.isEmpty() || "/".equals(suffix)) {
+            return "http://127.0.0.1:" + serverPort;
+        }
+        if (!suffix.startsWith("/")) {
+            suffix = "/" + suffix;
+        }
+        while (suffix.length() > 1 && suffix.endsWith("/")) {
+            suffix = suffix.substring(0, suffix.length() - 1);
+        }
+        return "http://127.0.0.1:" + serverPort + suffix;
     }
 
     /** 列出指定角色端。 */
@@ -192,7 +215,7 @@ public class EndpointService {
             String message = "本机探活成功";
             String baseUrl = endpoint.baseUrl();
             if (endpoint.role() == DatabaseRole.SINK && (baseUrl == null || baseUrl.isBlank())) {
-                baseUrl = "http://127.0.0.1:" + serverPort;
+                baseUrl = localBaseUrl(serverPort, contextPath);
             }
             if (endpoint.role() == DatabaseRole.SINK && instanceService.isSinkEnabled()) {
                 SinkHandshakeService.HandshakeResponse handshake = handshakeService.handshake();

@@ -22,6 +22,9 @@ npm --prefix web run test -- --run
 
 覆盖导航、登录、端管理、数据源、任务向导、运行列表/详情、状态映射等核心视图。
 
+后端新增覆盖：目标元数据远程查询、CSRF Cookie 名可配置、驱动加载、无时区时间语义、
+双阶段增量游标、UPSERT_NO_OVERWRITE / REPLACE_ALL 写入模式与批次退避重试等。
+
 ## 真实数据库 E2E
 
 完整说明见源码仓库中的 `e2e/README.md`（分发包不含 e2e 测试脚本）。核心脚本在源码仓库根目录执行：
@@ -66,5 +69,6 @@ E2E_DRIVERS_DIR
 | Table 全量/增量 | run-direction-tests.sh |
 | SQL 模式 | run-direction-tests.sh |
 | 发送前断网/响应丢失/重启/Hash 冲突 | run-failure-tests.sh |
+| 手动增量续采与游标时间基准 | 后端 IncrementalCursorIntegrationTest（门控） |
 | 10 万行容量与稳定性 | run-capacity-smoke.sh |
 | 管理台交互 | web Playwright e2e |

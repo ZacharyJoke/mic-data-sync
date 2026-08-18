@@ -21,6 +21,16 @@ public abstract class PostgresLikeTargetAdapter implements TargetDatabaseAdapter
     public static final String RECEIPT_TABLE = "mic_sync_batch_receipt";
 
     @Override
+    public List<String> listSchemas(Connection connection) throws SQLException {
+        return PostgresMetadataReader.listSchemas(connection);
+    }
+
+    @Override
+    public List<String> listTables(Connection connection, String schema) throws SQLException {
+        return PostgresMetadataReader.listTables(connection, schema);
+    }
+
+    @Override
     public TableMetadata readTableMetadata(Connection connection, String schema, String table)
             throws SQLException {
         return PostgresMetadataReader.readTableMetadata(connection, schema, table);

@@ -47,6 +47,27 @@ public final class AgentProtocol {
     public record TargetPreflightResponse(boolean valid, List<PreflightIssue> issues) {
     }
 
+    /** 远端目标库 Schema 列表。 */
+    public record SchemaList(List<String> schemas) {
+    }
+
+    /** 远端指定 Schema 下的目标表列表。 */
+    public record TableList(List<String> tables) {
+    }
+
+    /** 远端目标表元数据（字段/主键/唯一索引）。 */
+    public record TargetTableMetadata(
+            String schema,
+            String table,
+            List<TargetColumn> columns,
+            List<String> primaryKeyColumns,
+            List<List<String>> uniqueIndexes) {
+    }
+
+    /** 远端目标表字段。 */
+    public record TargetColumn(String name, String typeName, boolean nullable, boolean primaryKey) {
+    }
+
     /** 预检问题项。 */
     public record PreflightIssue(
             String severity,

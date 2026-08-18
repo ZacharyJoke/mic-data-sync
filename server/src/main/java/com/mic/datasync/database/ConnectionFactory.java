@@ -31,14 +31,14 @@ public class ConnectionFactory {
         this.roleProperties = roleProperties;
     }
 
-    /** 驱动目录：{@code ${dataDir}/drivers}。 */
+    /** 驱动目录：默认 {@code ${dataDir}/drivers}，可用 {@code mic.sync.driver-dir} 覆盖。 */
     public Path driverDirectory() {
-        return Path.of(roleProperties.dataDir(), "drivers");
+        return Path.of(roleProperties.driverDir());
     }
 
     /** 使用给定配置建立连接（驱动加载失败或连接失败抛出异常）。 */
     public Connection open(DatabaseConfig config) throws SQLException {
-        Driver driver = DriverLoader.load(config.databaseType(), driverDirectory());
+        Driver driver = DriverLoader.load(config.databaseType(), driverDirectory(), config.jdbcUrl());
         Properties props = new Properties();
         props.setProperty("user", config.username());
         props.setProperty("password", config.password());

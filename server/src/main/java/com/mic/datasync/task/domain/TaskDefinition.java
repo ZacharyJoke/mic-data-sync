@@ -53,8 +53,18 @@ public record TaskDefinition(
     public enum WriteMode {
         /** 按目标唯一 Key 执行 UPSERT（需要唯一约束）。 */
         UPSERT,
+        /**
+         * 按目标唯一 Key 执行冲突跳过：目标已存在相同 Key 时保留目标行，
+         * 仅插入新行（需要唯一约束；openGauss/Vastbase 用无操作更新实现）。
+         */
+        UPSERT_NO_OVERWRITE,
         /** 仅插入（追加型任务，重复执行会重复插入）。 */
-        INSERT_ONLY
+        INSERT_ONLY,
+        /**
+         * 全量重导：目标表应为空（由人工线下清空），工具校验空表后全量插入；
+         * 仅支持全量同步，工具自身不执行清表操作。
+         */
+        REPLACE_ALL
     }
 
     /** 字段映射：源字段 → 目标字段。 */

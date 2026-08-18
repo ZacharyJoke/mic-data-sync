@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -40,19 +41,24 @@ public class AuthController {
 
     private final AuthenticationManager authenticationManager;
     private final SecurityContextLogoutHandler logoutHandler = new SecurityContextLogoutHandler();
+    private final String csrfCookieName;
 
-    public AuthController(AuthenticationManager authenticationManager) {
+    public AuthController(
+            AuthenticationManager authenticationManager,
+            @Value("${mic.sync.security.csrf-cookie-name:XSRF-TOKEN}") String csrfCookieName) {
         this.authenticationManager = authenticationManager;
+        this.csrfCookieName = csrfCookieName;
     }
 
     /** 获取 CSRF Token，同时显式通过响应 Cookie 下发 XSRF-TOKEN（与 CsrfFilter 校验口径一致）。 */
     @GetMapping("/csrf")
     public Map<String, String> csrf(CsrfToken csrfToken, HttpServletResponse response) {
-        jakarta.servlet.http.Cookie cookie = new jakarta.servlet.http.Cookie("XSRF-TOKEN", csrfToken.getToken());
+        jakarta.servlet.http.Cookie cookie = new jakarta.servlet.http.Cookie(csrfCookieName, csrfToken.getToken());
         cookie.setPath("/");
         cookie.setHttpOnly(false);
         response.addCookie(cookie);
-        return Map.of("token", csrfToken.getToken());
+        // 返回 Cookie 名，前端据此动态读取（支持多实例不同 CSRF Cookie 名）
+        return Map.of("token", csrfToken.getToken(), "csrfCookieName", csrfCookieName);
     }
 
     /** 管理员登录。 */

@@ -6,6 +6,7 @@ import com.mic.datasync.webapi.ApiError;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -36,13 +37,19 @@ import java.nio.charset.StandardCharsets;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    private final String csrfCookieName;
+
+    public SecurityConfig(@Value("${mic.sync.security.csrf-cookie-name:XSRF-TOKEN}") String csrfCookieName) {
+        this.csrfCookieName = csrfCookieName;
+    }
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
         http
                 // CSRF：Cookie 存储，前端读取 XSRF-TOKEN 并以请求头回传。
                 // 使用非 XOR 的请求处理器，前端可原样回传 Cookie 中的 Token。
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRepository(csrfTokenRepository())
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                         // Sink 外部链路使用 Bearer Token 认证（无 Cookie），跳过 CSRF
                         // Agent 链路使用 Sink 访问令牌认证（无 Cookie），跳过 CSRF
@@ -68,6 +75,18 @@ public class SecurityConfig {
                 // 退出由 /api/v1/auth/logout 自定义处理
                 .logout(AbstractHttpConfigurer::disable);
         return http.build();
+    }
+
+    /**
+     * CSRF Token Cookie 仓库：Cookie 名可配置（默认 XSRF-TOKEN）。
+     *
+     * <p>同主机部署多个实例（不同端口/域名）时，浏览器按域共享同名 Cookie；
+     * 各实例必须配置不同的 CSRF Cookie 名，避免互相覆盖导致登录后请求 403。</p>
+     */
+    private CookieCsrfTokenRepository csrfTokenRepository() {
+        CookieCsrfTokenRepository repository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        repository.setCookieName(csrfCookieName);
+        return repository;
     }
 
     @Bean

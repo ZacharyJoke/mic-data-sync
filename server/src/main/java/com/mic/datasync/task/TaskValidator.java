@@ -17,6 +17,7 @@ import com.mic.datasync.database.metadata.ColumnMetadata;
 import com.mic.datasync.database.metadata.TableMetadata;
 import com.mic.datasync.source.TableReadPlanCompiler;
 import com.mic.datasync.source.domain.ReadDefinition;
+import com.mic.datasync.source.domain.ReadPlan.PaginationStrategy;
 import com.mic.datasync.source.domain.SqlReadDefinition;
 import com.mic.datasync.source.domain.TableReadDefinition;
 import com.mic.datasync.source.sql.SqlMetadataInspector;
@@ -118,6 +119,8 @@ public class TaskValidator {
     /** 启用前完整校验（连接真实 Source/Target）。 */
     public ValidationReport validateForEnable(TaskRecord task) {
         List<ValidationReport.Issue> issues = new ArrayList<>();
+        validateIncrementalCursorConfiguration(task.readDefinition(), task.writeMode(),
+                task.uniqueKeys(), issues);
 
         DatabaseConfig sourceConfig = resolveSourceConfig(task);
         DatabaseConfig targetConfig = resolveTargetConfig(task);
@@ -251,6 +254,34 @@ public class TaskValidator {
         }
     }
 
+    /** 增量游标配置校验（可单测）：配置了更新时间字段的任务必须使用 UPSERT 写入模式。 */
+    public void validateIncrementalCursorConfiguration(ReadDefinition definition,
+                                                       WriteMode writeMode,
+                                                       List<String> uniqueKeys,
+                                                       List<ValidationReport.Issue> issues) {
+        // REPLACE_ALL 仅支持全量：即使配置了更新时间字段也不允许增量
+        if (writeMode == WriteMode.REPLACE_ALL) {
+            if (definition.updatedTimeField() != null && !definition.updatedTimeField().isBlank()) {
+                issues.add(error("REPLACE_ALL_NO_INCREMENT",
+                        "REPLACE_ALL 仅支持全量同步，不能配置更新时间字段",
+                        "readDefinition.updatedTimeField", ValidationReport.ValidationStage.SOURCE_VALIDATION,
+                        "移除更新时间字段后重新保存"));
+            }
+            return;
+        }
+        if (definition.updatedTimeField() == null || definition.updatedTimeField().isBlank()) {
+            return;
+        }
+        boolean conflictSafeMode = writeMode == WriteMode.UPSERT
+                || writeMode == WriteMode.UPSERT_NO_OVERWRITE;
+        if (!conflictSafeMode || uniqueKeys == null || uniqueKeys.isEmpty()) {
+            issues.add(error("INCREMENTAL_REQUIRES_UPSERT",
+                    "配置了更新时间字段的任务必须使用 UPSERT 或 UPSERT_NO_OVERWRITE 写入模式并配置唯一 Key",
+                    "writeMode", ValidationReport.ValidationStage.TARGET_VALIDATION,
+                    "将写入模式改为 UPSERT / UPSERT_NO_OVERWRITE 并配置唯一 Key"));
+        }
+    }
+
     private void validateSourceStructure(TaskRecord task, DatabaseConfig sourceConfig,
                                          List<ValidationReport.Issue> issues) {
         try (Connection connection = connectionFactory.open(sourceConfig)) {
@@ -258,12 +289,40 @@ public class TaskValidator {
             ReadDefinition definition = task.readDefinition();
             if ("TABLE".equals(task.readMode()) && definition instanceof TableReadDefinition tableDefinition) {
                 TableMetadata metadata = adapter.readTableMetadata(connection, tableDefinition.schema(), tableDefinition.table());
+                PaginationStrategy strategy = task.writeMode() == WriteMode.REPLACE_ALL
+                        ? PaginationStrategy.OFFSET : PaginationStrategy.KEYSET;
                 try {
-                    tableCompiler.compile(tableDefinition, metadata);
+                    // softUniqueAccepted=true：唯一性由下方约束/实测校验把关
+                    tableCompiler.compile(tableDefinition, metadata, strategy, true);
                 } catch (IllegalArgumentException ex) {
                     issues.add(error("VALIDATION_FAILED", ex.getMessage(),
                             "readDefinition", ValidationReport.ValidationStage.SOURCE_VALIDATION,
                             "根据提示修正读取定义"));
+                    return;
+                }
+                // 软唯一键实测：KEYSET 且分页键非约束组合时，验证组合唯一且非 NULL
+                if (strategy == PaginationStrategy.KEYSET
+                        && !tableDefinition.paginationKeys().isEmpty()
+                        && !isConstrainedUniqueKey(metadata, tableDefinition.paginationKeys())) {
+                    try {
+                        boolean unique = adapter.columnGroupIsUnique(connection,
+                                tableDefinition.schema(), tableDefinition.table(),
+                                tableDefinition.paginationKeys());
+                        if (!unique) {
+                            issues.add(error("PAGINATION_KEY_NOT_UNIQUE",
+                                    "分页 Key 组合在源表中不唯一（或含 NULL），不允许作为分页键: "
+                                            + String.join(",", tableDefinition.paginationKeys()),
+                                    "readDefinition.paginationKeys",
+                                    ValidationReport.ValidationStage.SOURCE_VALIDATION,
+                                    "更换为唯一组合 / 在源表补唯一索引 / 改用 REPLACE_ALL 全量重导"));
+                        }
+                    } catch (Exception ex) {
+                        issues.add(error("DATABASE_CONNECTION_FAILED",
+                                "分页 Key 唯一性校验失败: " + safeMessage(ex),
+                                "readDefinition.paginationKeys",
+                                ValidationReport.ValidationStage.SOURCE_VALIDATION,
+                                "检查 Source 连接与分页键配置后重试"));
+                    }
                 }
             } else if ("SQL".equals(task.readMode()) && definition instanceof SqlReadDefinition sqlDefinition) {
                 SqlSafetyValidator.ValidationResult validation = sqlSafetyValidator.validate(sqlDefinition.rawSql());
@@ -305,11 +364,13 @@ public class TaskValidator {
             List<String> sourceColumns = sourceColumnNames(task);
             validateMappings(sourceColumns, targetMetadata, task.fieldMappings(), issues);
             // UPSERT 唯一约束
-            if (task.writeMode() == WriteMode.UPSERT) {
+            if (task.writeMode() == WriteMode.UPSERT
+                    || task.writeMode() == WriteMode.UPSERT_NO_OVERWRITE) {
                 if (task.uniqueKeys().isEmpty()) {
-                    issues.add(error("TARGET_UNIQUE_CONSTRAINT_MISSING", "UPSERT 必须配置唯一 Key",
+                    issues.add(error("TARGET_UNIQUE_CONSTRAINT_MISSING",
+                            "UPSERT / UPSERT_NO_OVERWRITE 必须配置唯一 Key",
                             "uniqueKeys", ValidationReport.ValidationStage.TARGET_VALIDATION,
-                            "为 UPSERT 配置唯一 Key"));
+                            "为写入模式配置唯一 Key"));
                 } else if (!adapter.hasUniqueConstraint(targetMetadata, task.uniqueKeys())) {
                     issues.add(error("TARGET_UNIQUE_CONSTRAINT_MISSING",
                             "目标表不存在与唯一 Key 匹配的唯一约束",
@@ -395,6 +456,29 @@ public class TaskValidator {
         Set<String> set = new HashSet<>();
         values.forEach(v -> set.add(v.toLowerCase(Locale.ROOT)));
         return set;
+    }
+
+    /** 分页键是否为「主键或唯一索引」完全匹配的约束唯一组合。 */
+    private boolean isConstrainedUniqueKey(TableMetadata metadata, List<String> keys) {
+        Set<String> normalized = lowerSet(keys);
+        if (metadata.primaryKeyColumns() != null
+                && matches(metadata.primaryKeyColumns(), normalized)) {
+            return true;
+        }
+        for (List<String> uniqueIndex : metadata.uniqueIndexes()) {
+            if (matches(uniqueIndex, normalized)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean matches(List<String> candidates, Set<String> normalized) {
+        if (candidates == null || candidates.size() != normalized.size()) {
+            return false;
+        }
+        Set<String> candidateSet = lowerSet(candidates);
+        return candidateSet.equals(normalized);
     }
 
     private String safeMessage(Exception ex) {

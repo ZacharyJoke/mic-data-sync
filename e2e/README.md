@@ -6,7 +6,8 @@
 - 数据库账号具备 DDL（建表）、SELECT、INSERT/UPDATE 权限；
 - 已构建的可执行 JAR（`server/target/mic-data-sync-server-0.1.0-SNAPSHOT.jar`）；
 - JDK 21；
-- 数据库 JDBC 驱动 JAR 放置在客户端 `${dataDir}/drivers`（kingbase8-*.jar / opengauss-jdbc-*.jar）。
+- 数据库 JDBC 驱动 JAR 放置在客户端 `${dataDir}/drivers`（kingbase8-*.jar / opengauss-jdbc-*.jar；
+  分发包/镜像已内置 opengauss-jdbc-3.0.0.jar 与 kingbase8-8.2.0.jar）。
 
 ## 运行方式（验收环境）
 

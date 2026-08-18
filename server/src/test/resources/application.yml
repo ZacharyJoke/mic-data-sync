@@ -1,6 +1,13 @@
 # 测试专用配置：遮蔽 main application.yml，使用内存 SQLite，避免污染工作区 data/ 目录
 server:
   port: 0
+  servlet:
+    # MockMvc 不自动应用 context-path，测试按根路径访问控制器；
+    # 真实部署的 /mic-data-sync/ 前缀由部署冒烟与线上回归覆盖
+    context-path: ''
+    session:
+      cookie:
+        name: ${MIC_SYNC_SESSION_COOKIE:JSESSIONID}
 
 spring:
   application:
@@ -13,6 +20,8 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # 与主配置保持一致：SQLite 重建被外键引用的表需要 PRAGMA 在事务外执行
+    mixed: true
 
 management:
   endpoints:
@@ -29,6 +38,8 @@ mic:
     timezone: ${MIC_SYNC_TIMEZONE:Asia/Shanghai}
     roles: ${MIC_SYNC_ROLES:source,sink}
     data-dir: ${java.io.tmpdir}/mic-data-sync-test
+    security:
+      csrf-cookie-name: ${MIC_SYNC_CSRF_COOKIE:XSRF-TOKEN}
     admin:
       username: admin
       password: admin123

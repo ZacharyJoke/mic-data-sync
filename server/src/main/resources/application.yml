@@ -2,6 +2,14 @@
 server:
   # 服务端口，可通过环境变量 MIC_SYNC_SERVER_PORT 覆盖
   port: ${MIC_SYNC_SERVER_PORT:19090}
+  servlet:
+    # URL 前缀：开发/测试/生产统一经 nginx 以 /mic-data-sync/ 转发
+    context-path: ${MIC_SYNC_CONTEXT_PATH:/mic-data-sync}
+    session:
+      cookie:
+        # 会话 Cookie 名称：同主机多实例必须配置不同值（环境变量 MIC_SYNC_SESSION_COOKIE），
+        # 避免浏览器同域共享同名 Cookie 导致会话互顶（后登录实例顶掉先登录实例）
+        name: ${MIC_SYNC_SESSION_COOKIE:JSESSIONID}
 
 spring:
   application:
@@ -16,6 +24,9 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # SQLite 重建被外键引用的表（如 V010 扩展 write_mode 枚举）需要
+    # PRAGMA foreign_keys=OFF，该语句必须在事务外执行，故开启 mixed
+    mixed: true
 
 management:
   endpoints:
@@ -30,12 +41,20 @@ management:
 
 mic:
   sync:
+    # 应用日志目录，可通过环境变量 MIC_SYNC_LOG_DIR 覆盖
+    log-dir: ${MIC_SYNC_LOG_DIR:/data/mic-data-sync/logs}
+    # JDBC 驱动目录，可通过环境变量 MIC_SYNC_DRIVER_DIR 覆盖
+    driver-dir: ${MIC_SYNC_DRIVER_DIR:${MIC_SYNC_DATA_DIR:./data}/drivers}
     # 工作台统计使用的本地时区，可通过环境变量覆盖
     timezone: ${MIC_SYNC_TIMEZONE:Asia/Shanghai}
     # 部署角色（source/sink），可通过环境变量覆盖
     roles: ${MIC_SYNC_ROLES:source,sink}
     # 本地数据目录（任务数据、日志等），可通过环境变量覆盖
     data-dir: ${MIC_SYNC_DATA_DIR:./data}
+    # 管理控制台 CSRF Cookie 名称：同主机多实例必须配置不同值（环境变量 MIC_SYNC_CSRF_COOKIE），
+    # 与 Session Cookie 一起避免同域共享同名 Cookie 导致的会话/CSRF 互顶
+    security:
+      csrf-cookie-name: ${MIC_SYNC_CSRF_COOKIE:XSRF-TOKEN}
     source:
       # 源侧允许的最大任务数
       max-tasks: ${MIC_SYNC_SOURCE_MAX_TASKS:10}

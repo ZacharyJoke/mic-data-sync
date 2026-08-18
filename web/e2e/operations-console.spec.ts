@@ -10,7 +10,8 @@ async function loginWithMockApi(page: Page) {
 
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
-    const path = new URL(request.url()).pathname
+    // 兼容部署前缀：Vite base 为 /mic-data-sync/，接口路径带前缀，fixtures 按无前缀路径组织
+    const path = new URL(request.url()).pathname.replace(/^\/mic-data-sync/, '')
     const method = request.method()
 
     if (method === 'POST' && path === '/api/v1/runs/failed-run-id/retry') {
@@ -89,8 +90,20 @@ async function loginWithMockApi(page: Page) {
         ],
       },
       '/api/v1/runs/failed-run-id/batches': {
-        items: [],
-        total: 0,
+        items: [
+          {
+            batchId: 'batch-1',
+            runId: 'failed-run-id',
+            batchSequence: 1,
+            payloadHash: '8d0fb147404096a71e6762e69af042c3bf8d3cc5eaac69e4b7487ce145d30a56',
+            rowCount: 1000,
+            timeWatermark: '2026-08-01T10:04:59Z',
+            status: 'SUCCEEDED',
+            attemptCount: 1,
+            createdAt: '2026-08-01T10:00:00Z',
+          },
+        ],
+        total: 1,
         page: 1,
         size: 20,
       },
@@ -157,9 +170,25 @@ test('工作台到失败诊断和安全重试', async ({ page }) => {
 test('手机端隐藏任务创建并保留诊断动作', async ({ page }) => {
   test.skip((page.viewportSize()?.width ?? 0) > 767, '仅移动端验证')
   await loginWithMockApi(page)
-  await page.goto('/tasks/new')
+  await page.goto('/mic-data-sync/tasks/new')
   await expect(page.getByText('请在平板或桌面完成任务配置')).toBeVisible()
-  await page.goto('/runs/failed-run-id')
+  await page.goto('/mic-data-sync/runs/failed-run-id')
   await expect(page.getByRole('button', { name: '安全重试' })).toBeVisible()
   await expectNoHorizontalOverflow(page)
+})
+
+test('运行详情批次列表渲染时间水位列', async ({ page, isMobile }) => {
+  await loginWithMockApi(page)
+  await page.goto('/mic-data-sync/runs/failed-run-id')
+
+  const table = page.locator('[data-test="batch-list"]')
+  await expect(table).toBeVisible()
+  // 桌面/平板展示表格列，移动端隐藏表格仅展示卡片
+  if (!isMobile) {
+    await expect(table.getByRole('columnheader', { name: '时间水位' })).toBeVisible()
+    // 批次最后一行 updatedTimeField 值按 YYYY-MM-DD HH:mm:ss 展示（UTC+08:00）
+    await expect(table.getByRole('cell', { name: '2026-08-01 18:04:59' })).toBeVisible()
+  }
+  // 卡片视图全平台展示时间水位
+  await expect(page.getByText('时间水位 2026-08-01 18:04:59')).toBeVisible()
 })

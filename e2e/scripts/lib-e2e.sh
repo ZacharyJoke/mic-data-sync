@@ -31,7 +31,7 @@ start_client() {
 wait_ready() {
   local port="$1"
   for _ in $(seq 1 60); do
-    if curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/actuator/health" 2>/dev/null | grep -q 200; then
+    if curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/mic-data-sync/actuator/health" 2>/dev/null | grep -q 200; then
       return 0
     fi
     sleep 1
@@ -43,10 +43,10 @@ wait_ready() {
 api_login() {
   local port="$1" cookie="$2"
   local csrf
-  csrf=$(curl -s -c "$cookie" "http://127.0.0.1:$port/api/v1/auth/csrf" | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+  csrf=$(curl -s -c "$cookie" "http://127.0.0.1:$port/mic-data-sync/api/v1/auth/csrf" | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
   curl -s -b "$cookie" -c "$cookie" -H 'Content-Type: application/json' -H "X-XSRF-TOKEN: $csrf" \
     -d "{\"username\":\"admin\",\"password\":\"$MIC_SYNC_ADMIN_PASSWORD\"}" \
-    "http://127.0.0.1:$port/api/v1/auth/login" > /dev/null
+    "http://127.0.0.1:$port/mic-data-sync/api/v1/auth/login" > /dev/null
   echo "$csrf"
 }
 

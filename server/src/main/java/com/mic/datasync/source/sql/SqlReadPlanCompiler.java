@@ -1,6 +1,7 @@
 package com.mic.datasync.source.sql;
 
 import com.mic.datasync.source.domain.ReadPlan;
+import com.mic.datasync.source.domain.ReadPlan.PaginationStrategy;
 import com.mic.datasync.source.domain.SqlReadDefinition;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +24,14 @@ public class SqlReadPlanCompiler {
      * @throws IllegalArgumentException 结果存在重复列名时抛出
      */
     public ReadPlan compile(SqlReadDefinition definition, List<SqlMetadataInspector.ResultColumn> resultColumns) {
+        return compile(definition, resultColumns, PaginationStrategy.KEYSET);
+    }
+
+    /**
+     * 编译 SQL 读取定义（按分页策略透传；SQL 模式分页键由用户负责）。
+     */
+    public ReadPlan compile(SqlReadDefinition definition, List<SqlMetadataInspector.ResultColumn> resultColumns,
+                            PaginationStrategy strategy) {
         if (resultColumns == null || resultColumns.isEmpty()) {
             throw new IllegalArgumentException("SQL 结果字段为空，无法生成读取计划");
         }
@@ -44,8 +53,11 @@ public class SqlReadPlanCompiler {
                 List.of(),
                 definition.paginationKeys(),
                 definition.updatedTimeField(),
+                definition.incrementalStrategy(),
+                definition.incrementalLookbackMinutes(),
                 definition.rawSql(),
-                structureFingerprint(columnNames));
+                structureFingerprint(columnNames),
+                strategy);
     }
 
     private String schemaOf(String qualified) {

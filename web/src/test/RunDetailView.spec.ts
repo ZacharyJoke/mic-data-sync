@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
 import RunDetailView from '@/views/RunDetailView.vue'
+import { formatDateTime } from '@/shared/utils/format'
 
 const httpMock = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 const messageMock = vi.hoisted(() => ({ warning: vi.fn(), success: vi.fn(), error: vi.fn() }))
@@ -93,6 +94,48 @@ describe('RunDetailView', () => {
     const view = await mountView()
 
     expect(view.find('[data-test="batch-list"]').text()).toContain('暂无批次明细')
+  })
+
+  it('批次列表渲染时间水位列', async () => {
+    httpMock.get.mockImplementation((url: string) => {
+      if (url.includes('/diagnosis')) {
+        return Promise.resolve({ data: null })
+      }
+      if (url.includes('/actions')) {
+        return Promise.resolve({
+          data: { runId: RUN.runId, actions: ACTIVE_ACTIONS },
+        })
+      }
+      if (url.includes('/batches')) {
+        return Promise.resolve({
+          data: {
+            items: [
+              {
+                batchId: 'batch-1',
+                runId: RUN.runId,
+                batchSequence: 1,
+                payloadHash: 'abc123',
+                rowCount: 5,
+                timeWatermark: '2026-10-01T10:00:00Z',
+                status: 'SUCCEEDED',
+                attemptCount: 1,
+                createdAt: '2026-08-01T00:00:00Z',
+              },
+            ],
+            total: 1,
+            page: 1,
+            size: 20,
+          },
+        })
+      }
+      return Promise.resolve({ data: RUN })
+    })
+    const view = await mountView()
+
+    expect(view.find('[data-test="batch-list"]').text()).toContain('时间水位')
+    expect(view.find('[data-test="batch-list"]').text()).toContain(
+      formatDateTime('2026-10-01T10:00:00Z'),
+    )
   })
 
   it('暂停操作调用接口并刷新', async () => {

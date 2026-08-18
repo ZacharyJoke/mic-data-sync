@@ -11,6 +11,8 @@ import java.util.List;
  * @param filters         追加过滤条件（AND 语义，MVP 阶段为简单条件；条件树由后续任务扩展）
  * @param paginationKeys  组合后稳定且唯一的分页 Key
  * @param updatedTimeField 增量更新时间字段（可为空）
+ * @param incrementalStrategy 增量策略（可为空，默认 TIME_WINDOW）
+ * @param incrementalLookbackMinutes 增量回看分钟数（可为空，默认 10）
  */
 public record TableReadDefinition(
         String schema,
@@ -18,7 +20,9 @@ public record TableReadDefinition(
         List<String> selectedColumns,
         List<FilterCondition> filters,
         List<String> paginationKeys,
-        String updatedTimeField
+        String updatedTimeField,
+        IncrementalStrategy incrementalStrategy,
+        Integer incrementalLookbackMinutes
 ) implements ReadDefinition {
 
     public TableReadDefinition {
@@ -28,10 +32,29 @@ public record TableReadDefinition(
         selectedColumns = selectedColumns == null ? List.of() : List.copyOf(selectedColumns);
         filters = filters == null ? List.of() : List.copyOf(filters);
         paginationKeys = paginationKeys == null ? List.of() : List.copyOf(paginationKeys);
+        incrementalStrategy = incrementalStrategy == null
+                ? IncrementalStrategy.TIME_WINDOW : incrementalStrategy;
+        incrementalLookbackMinutes = incrementalLookbackMinutes == null
+                ? 10 : incrementalLookbackMinutes;
+        if (incrementalLookbackMinutes < 1) {
+            throw new IllegalArgumentException("增量回看分钟数必须 >= 1");
+        }
     }
 
     @Override
     public ReadMode mode() {
         return ReadMode.TABLE;
+    }
+
+    /** 兼容旧构造调用：默认时间窗口策略 + 10 分钟回看。 */
+    public TableReadDefinition(
+            String schema,
+            String table,
+            List<String> selectedColumns,
+            List<FilterCondition> filters,
+            List<String> paginationKeys,
+            String updatedTimeField) {
+        this(schema, table, selectedColumns, filters, paginationKeys,
+                updatedTimeField, IncrementalStrategy.TIME_WINDOW, 10);
     }
 }

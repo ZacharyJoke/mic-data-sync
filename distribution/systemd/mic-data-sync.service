@@ -8,12 +8,21 @@ After=network.target
 Type=simple
 # 建议使用独立账号（root 可运行但不推荐）：User=mic
 User=mic
+# 启动前确保数据/日志/驱动目录存在（SQLite 不会自动创建父目录，缺失会启动失败）
+ExecStartPre=/bin/mkdir -p /data/mic-data-sync/data /data/mic-data-sync/logs /data/mic-data-sync/drivers
 Environment=MIC_SYNC_ROLES=source,sink
 Environment=MIC_SYNC_SERVER_PORT=19090
-Environment=MIC_SYNC_DATA_DIR=/opt/mic-data-sync/data
+Environment=MIC_SYNC_CONTEXT_PATH=/mic-data-sync
+Environment=MIC_SYNC_DATA_DIR=/data/mic-data-sync/data
+Environment=MIC_SYNC_LOG_DIR=/data/mic-data-sync/logs
+Environment=MIC_SYNC_DRIVER_DIR=/data/mic-data-sync/drivers
+# 同主机部署多个实例（不同端口）时，各实例必须配置不同的会话/CSRF Cookie 名，
+# 否则浏览器同域共享同名 Cookie，后登录实例会顶掉先登录实例（表现为 401/403）：
+# Environment=MIC_SYNC_SESSION_COOKIE=mic-sync-a-session
+# Environment=MIC_SYNC_CSRF_COOKIE=mic-sync-a-csrf
 # 管理员初始化与密钥通过 Environment 或 EnvironmentFile 提供：
-# EnvironmentFile=/etc/mic-data-sync.env
-ExecStart=/usr/bin/java -jar /opt/mic-data-sync/mic-data-sync-server-0.1.0-SNAPSHOT.jar
+# EnvironmentFile=/data/mic-data-sync/mic-data-sync.env
+ExecStart=/usr/bin/java -jar /data/mic-data-sync/mic-data-sync-server-0.1.0-SNAPSHOT.jar --spring.config.additional-location=optional:file:/data/mic-data-sync/config/application.yml
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5

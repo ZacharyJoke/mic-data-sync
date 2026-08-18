@@ -40,10 +40,10 @@ CSRF_SNK=$(api_login 19102 "$WORK/snk.cookies")
 
 echo "==> 配置 Source/Sink 数据库"
 curl -s -b "$WORK/src.cookies" -H "X-XSRF-TOKEN: $CSRF_SRC" -H 'Content-Type: application/json' \
-  -X PUT "http://127.0.0.1:19101/api/v1/database/SOURCE" \
+  -X PUT "http://127.0.0.1:19101/mic-data-sync/api/v1/database/SOURCE" \
   -d "{\"product\":\"$SOURCE_PRODUCT\",\"jdbcUrl\":\"$E2E_SOURCE_URL\",\"username\":\"$E2E_SOURCE_USER\",\"password\":\"$E2E_SOURCE_PASSWORD\",\"driverType\":\"$([ "$SOURCE_PRODUCT" = KINGBASE_ES ] && echo kingbase8 || echo opengauss)\"}"
 curl -s -b "$WORK/snk.cookies" -H "X-XSRF-TOKEN: $CSRF_SNK" -H 'Content-Type: application/json' \
-  -X PUT "http://127.0.0.1:19102/api/v1/database/SINK" \
+  -X PUT "http://127.0.0.1:19102/mic-data-sync/api/v1/database/SINK" \
   -d "{\"product\":\"$TARGET_PRODUCT\",\"jdbcUrl\":\"$E2E_TARGET_URL\",\"username\":\"$E2E_TARGET_USER\",\"password\":\"$E2E_TARGET_PASSWORD\",\"driverType\":\"$([ "$TARGET_PRODUCT" = KINGBASE_ES ] && echo kingbase8 || echo opengauss)\"}"
 
 echo "==> 初始化夹具与数据（Source）"
@@ -59,16 +59,16 @@ TARGET_ROWS=$("$E2E_PSQL" "$E2E_TARGET_URL" -tAc 'SELECT count(*) FROM mic_sync.
 
 # Sink Token（Source 端访问 Sink）
 SNK_TOKEN=$(curl -s -b "$WORK/snk.cookies" -H "X-XSRF-TOKEN: $CSRF_SNK" -X POST \
-  http://127.0.0.1:19102/api/v1/sink/token/rotate | python3 -c 'import sys,json;print(json.load(sys.stdin)["generated"])')
-SNK_INSTANCE=$(curl -s -b "$WORK/snk.cookies" http://127.0.0.1:19102/api/v1/sink/status | python3 -c 'import sys,json;print(json.load(sys.stdin)["sinkInstanceId"])')
+  http://127.0.0.1:19102/mic-data-sync/api/v1/sink/token/rotate | python3 -c 'import sys,json;print(json.load(sys.stdin)["generated"])')
+SNK_INSTANCE=$(curl -s -b "$WORK/snk.cookies" http://127.0.0.1:19102/mic-data-sync/api/v1/sink/status | python3 -c 'import sys,json;print(json.load(sys.stdin)["sinkInstanceId"])')
 
 echo "==> 创建 Table 模式任务并启用（full + incremental 断言见验收环境人工核对）"
 TASK_JSON=$(cat <<JSON
-{"name":"e2e-$DIRECTION","readMode":"TABLE","readDefinition":{"schema":"mic_sync","table":"patient","selectedColumns":[],"filters":[],"paginationKeys":["id"],"updatedTimeField":"updated_time"},"targetSchema":"mic_sync","targetTable":"patient","writeMode":"UPSERT","uniqueKeys":["id"],"fieldMappings":[{"sourceField":"id","targetField":"id"},{"sourceField":"name","targetField":"name"},{"sourceField":"status","targetField":"status"},{"sourceField":"del_flag","targetField":"del_flag"},{"sourceField":"note","targetField":"note"},{"sourceField":"updated_time","targetField":"updated_time"}],"remoteSinkUrl":"http://127.0.0.1:19102","expectedSinkInstanceId":"$SNK_INSTANCE"}
+{"name":"e2e-$DIRECTION","readMode":"TABLE","readDefinition":{"schema":"mic_sync","table":"patient","selectedColumns":[],"filters":[],"paginationKeys":["id"],"updatedTimeField":"updated_time"},"targetSchema":"mic_sync","targetTable":"patient","writeMode":"UPSERT","uniqueKeys":["id"],"fieldMappings":[{"sourceField":"id","targetField":"id"},{"sourceField":"name","targetField":"name"},{"sourceField":"status","targetField":"status"},{"sourceField":"del_flag","targetField":"del_flag"},{"sourceField":"note","targetField":"note"},{"sourceField":"updated_time","targetField":"updated_time"}],"remoteSinkUrl":"http://127.0.0.1:19102/mic-data-sync","expectedSinkInstanceId":"$SNK_INSTANCE"}
 JSON
 )
 curl -s -b "$WORK/src.cookies" -H "X-XSRF-TOKEN: $CSRF_SRC" -H 'Content-Type: application/json' \
-  -X POST http://127.0.0.1:19101/api/v1/tasks -d "$TASK_JSON" | python3 -m json.tool > /dev/null
+  -X POST http://127.0.0.1:19101/mic-data-sync/api/v1/tasks -d "$TASK_JSON" | python3 -m json.tool > /dev/null
 
 echo "==> $DIRECTION E2E 脚本执行完成（数据断言由人工/验收环境核对）"
 write_result "direction-$DIRECTION.json" <<JSON

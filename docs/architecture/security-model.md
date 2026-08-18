@@ -3,7 +3,8 @@
 ## 管理员认证
 
 - 管理员账号通过 `MIC_SYNC_ADMIN_PASSWORD` 在首次启动时初始化；
-- 登录建立 Cookie Session，前后端使用 Spring Security CSRF Token（`XSRF-TOKEN`）防护；
+- 登录建立 Cookie Session，前后端使用 Spring Security CSRF Token 防护；
+- 会话与 CSRF Cookie 名均可配置（`MIC_SYNC_SESSION_COOKIE` / `MIC_SYNC_CSRF_COOKIE`）：同主机部署多个实例时各实例必须配置不同值，避免浏览器同域共享同名 Cookie 导致会话/CSRF 互顶；
 - 除登录页外，所有 Web 页面与 `/api/v1/*` 管理接口都需要认证。
 
 ## Sink 数据通道认证

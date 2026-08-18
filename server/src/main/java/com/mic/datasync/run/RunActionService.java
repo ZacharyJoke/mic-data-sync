@@ -52,7 +52,9 @@ public class RunActionService {
         Optional<RunFailure> failure = failureService.get(runId);
         List<RunAction> actions = new ArrayList<>();
         actions.add(action("PAUSE", run.status() == RunStatus.RUNNING, "仅运行中的 Run 可暂停"));
-        actions.add(action("RESUME", run.status() == RunStatus.PAUSED, "仅已暂停的 Run 可继续"));
+        actions.add(action("RESUME",
+                run.status() == RunStatus.PAUSED || run.status() == RunStatus.UNKNOWN,
+                "仅已暂停或结果未知的 Run 可继续"));
         actions.add(action("REVALIDATE", run.status() == RunStatus.FAILED, "仅失败运行需要重新校验"));
         actions.add(action("RETRY",
                 run.status() == RunStatus.FAILED && failure.map(RunFailure::retryable).orElse(false),

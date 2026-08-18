@@ -2,7 +2,7 @@
 
 > 适用版本：MVP 1.0 P0（范围已冻结）  
 > 文档状态：随应用版本发布  
-> 最近更新：2026-08-02
+> 最近更新：2026-08-18
 
 本文说明当前版本明确支持、有条件支持和暂不支持的能力。任务配置页面负责就地校验，启用前执行统一检查；运行错误的完整公开目录见[错误码](error-codes.md)。
 
@@ -86,7 +86,8 @@ Web 控制台统一使用六个一级页面：
 
 - 首次同步执行全量读取，并使用源数据库高水位、每批短只读事务和全量后的自动追赶；
 - 后续支持手动增量；每日固定时间调度属于后续迭代，MVP-I1 候选版本未交付调度配置项；
-- UPSERT 增量支持“更新时间字段 + 唯一 Key”或单调递增唯一 Key；更新时间模式默认回看已确认检查点之前 10 分钟的数据，可按任务调整或关闭，并由目标唯一约束 UPSERT 消化跨 Run 重读；
+- 增量支持 `TIME_WINDOW` 与 `DUAL_PHASE`（双阶段：主键推进捕获新增 + 时间窗口补扫更新）两种策略；
+- UPSERT / UPSERT_NO_OVERWRITE 增量支持“更新时间字段 + 唯一 Key”或单调递增唯一 Key；更新时间模式默认回看已确认检查点之前 10 分钟的数据，可按任务调整或关闭，并由目标唯一约束 UPSERT 消化跨 Run 重读；
 - INSERT_ONLY 增量只允许严格单调递增、全局唯一且不会复用或回拨的源端 Key，不支持更新时间回看；
 - 回看窗口只能降低有限时长的晚提交漏数风险，不能解决无限长事务、任意旧时间写入或超出窗口的时间回拨；
 - 分页 Key 和增量游标的实际值必须非 NULL；
@@ -99,6 +100,10 @@ Web 控制台统一使用六个一级页面：
 
 目标表存在主键或唯一索引时，根据配置 Key 执行“存在则 UPDATE，不存在则 INSERT”。配置 Key 必须与目标数据库真实约束匹配。
 
+### UPSERT_NO_OVERWRITE
+
+目标表存在主键或唯一索引时，根据配置 Key 执行“存在则跳过、不存在则 INSERT”；冲突行保留目标已确认值，不覆盖。适用于“目标优先、源不覆盖”场景；无仲裁键时可退化为 `ON CONFLICT DO NOTHING`。
+
 ### INSERT_ONLY
 
 没有唯一 Key 时只能使用 INSERT_ONLY，并明确标记为追加型任务：
@@ -108,6 +113,15 @@ Web 控制台统一使用六个一级页面：
 - “发起新的全量”创建新 Run，不能提供跨运行业务去重；
 - 每个新的全量 Run 前必须确认 DBA 已准备目标表，或保留目标已有数据并接受重复/约束冲突风险；
 - 工具不自动执行 TRUNCATE 或 DELETE。
+
+### REPLACE_ALL（全量重导）
+
+无主键关联表等需要整表重建的场景可以使用 REPLACE_ALL：
+
+- 仅支持全量同步，不允许配置更新时间字段或执行手动增量（错误码 `REPLACE_ALL_NO_INCREMENT`）；
+- 首次真正写入批次前校验目标表为空，非空拒绝（错误码 `SINK_TARGET_NOT_EMPTY`）；工具不执行清表操作，由 DBA 线下清空后重试；
+- 分页使用 OFFSET 快照分页，不依赖唯一键，要求同步期间源表静止；
+- 支持软唯一键：无主键的表可配置业务上组合唯一但数据库无约束的字段组合，供冲突定位使用。
 
 ### 删除语义
 
@@ -131,6 +145,9 @@ Sink 在同一目标数据库事务中写入业务数据和 `mic_sync.mic_sync_b
 - 网络结果不确定时 `Batch=UNKNOWN`、`Run=UNKNOWN`、`Task=ENABLED`，必须查询回执或复用原批次身份重发；
 - 修复后重试原批次复用原 `runId/batchId`；
 - 不自动跳过坏行或坏批次。
+
+批次网络/确认类临时故障按退避间隔（30s / 120s / 600s，共 3 次）自动重试，期间 Run 保持 `WAITING_RETRY`；
+耗尽后保持批次 `UNKNOWN`，等待人工确认或安全重试；确定性错误直接 `FAILED`。
 
 默认最多 1 个活动 Run（可通过 `MIC_SYNC_SOURCE_MAX_ACTIVE_RUNS` 修改并重启生效），且不存在等待队列。`RUNNING`、`WAITING_RETRY`、`UNKNOWN`、`PAUSED` 均持续占用原名额；只有 `SUCCEEDED`、`FAILED`、`CANCELLED` 释放名额。终止暂停 Run 后任务仍保持暂停，恢复任务后才能开始新 Run。
 
@@ -164,6 +181,8 @@ P0 不自动清理回执，不要求 Sink 账号永久拥有 DELETE 权限。`mi
 - 暂不支持 BLOB、BYTEA、BINARY。
 
 默认限制：单字段 4 MiB、单批次解压后 16 MiB。达到 64 KiB 的远程批次默认使用 Gzip；超限时不截断数据。
+
+并发全量下限制读取页字节并复用传输负载，降低内存峰值；批次详情展示时间水位列。
 
 ## 10. 简单限速
 
@@ -238,7 +257,7 @@ MVP 1.0 不提供 `.micbak`、`backup create/verify/restore`、保留原 `instan
 - 使用外置 Java 21，推荐生产 ARM64 使用毕昇 JDK 21；
 - 默认端口 19090；
 - root 运行只告警，不阻断；
-- JDBC 驱动内置默认版本并允许本地替换，不支持 Web UI 上传；
+- 分发包默认内置 openGauss / PostgreSQL JDBC 驱动并允许本地替换，不支持 Web UI 上传；KingbaseES 驱动为商业授权组件，需按许可自行放置；
 - Spring Boot 通过 BOM 固定 3.5.5，前端使用 Vue 3。
 
 ## 16. MVP 暂不提供
@@ -259,7 +278,7 @@ MVP 1.0 不提供 `.micbak`、`backup create/verify/restore`、保留原 `instan
 本页只维护能力边界。所有对用户公开且稳定的错误码统一维护在[错误码目录](error-codes.md)。UI 错误卡片的“查看处理方法”必须直接跳转到对应错误码锚点；Java 异常类、JDBC 内部错误和调试标识只进入脱敏日志或诊断包。
 
 
-## 当前交付状态（2026-08-02）
+## 当前交付状态（2026-08-18）
 
 **MVP-I1 候选版本**：Web 控制台内置于客户端，管理员可通过 UI 管理端与数据源、
 创建 Table/SQL 任务、校验启用、执行首次全量与手动增量、查看运行进度与结构化诊断，
@@ -277,12 +296,14 @@ MVP 1.0 不提供 `.micbak`、`backup create/verify/restore`、保留原 `instan
   （AST 安全校验/字段探查/SQL→Table 转换）；
 - 任务 CRUD、字段映射、启用前完整校验（方向/Sink/结构/类型/唯一约束/回执 READY）；
 - Sink Token（Bearer 认证/掩码/轮换）、握手与 Readiness（回执表自动创建/DDL 回退）；
-- 批次幂等写入（业务 UPSERT + 回执同事务、DUPLICATE/Hash 冲突；UPSERT 自动排除目标主键
-  与全部唯一索引列）；
-- Run 引擎（全量 T0 切分 + 自动追赶、手动增量回看窗口、Keyset 分页、Checkpoint 单调推进）；
+- 批次幂等写入（业务 UPSERT / UPSERT_NO_OVERWRITE / INSERT_ONLY / REPLACE_ALL + 回执同事务、
+  DUPLICATE/Hash 冲突；UPSERT 自动排除目标主键与全部唯一索引列）；
+- Run 引擎（全量 T0 切分 + 自动追赶、手动增量回看窗口、双阶段增量策略、Keyset 分页、
+  Checkpoint 单调推进）；
+- 批次网络故障退避重试与 UNKNOWN 批次恢复、并发全量内存优化；
 - 暂停/继续、安全重试、启动恢复、Spool 7 天清理；加密 Spool（AES-GCM/原子提交）；
 - 结构化运行诊断（`run_failure`）与前端危险动作按后端可用性渲染；
-- Linux x86_64 分发包（start/stop/systemd/配置模板/运维文档）。
+- Linux x86_64 分发包（start/stop/systemd/nginx/配置模板/内置驱动/运维文档）。
 
 ### 候选版本边界（不在本迭代）
 

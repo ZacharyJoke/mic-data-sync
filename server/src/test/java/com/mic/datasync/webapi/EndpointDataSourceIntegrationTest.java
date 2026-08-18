@@ -93,4 +93,13 @@ class EndpointDataSourceIntegrationTest {
                 .andExpect(jsonPath("$.ok").value(true))
                 .andExpect(jsonPath("$.message").value("认证通过"));
     }
+
+    @Test
+    void probeSelfSinkWritesLocalBaseUrl() throws Exception {
+        mockMvc.perform(post("/api/v1/endpoints/self-sink/probe").with(ADMIN).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.endpoint.isSelf").value(true))
+                // 测试配置 context-path 为空、server.port=0：回写地址应取本地默认拼接结果
+                .andExpect(jsonPath("$.endpoint.baseUrl").value("http://127.0.0.1:0"));
+    }
 }

@@ -50,7 +50,7 @@ export interface CreateTaskRequest {
   readDefinition: Record<string, unknown>
   targetSchema?: string
   targetTable: string
-  writeMode: 'UPSERT' | 'INSERT_ONLY'
+  writeMode: 'UPSERT' | 'UPSERT_NO_OVERWRITE' | 'INSERT_ONLY' | 'REPLACE_ALL'
   uniqueKeys: string[]
   fieldMappings: FieldMapping[]
   remoteSinkUrl?: string
@@ -175,4 +175,24 @@ export async function getTargetMetadata(
     { params: dataSourceId ? { dataSourceId } : {} },
   )
   return response.data
+}
+
+/** 列出 Sink 目标库可用 Schema。 */
+export async function listTargetSchemas(dataSourceId?: string): Promise<string[]> {
+  const response = await http.get<{ schemas: string[] }>('/target/metadata/schemas', {
+    params: dataSourceId ? { dataSourceId } : {},
+  })
+  return response.data.schemas ?? []
+}
+
+/** 列出指定 Schema 下的目标表。 */
+export async function listTargetTables(
+  schema: string,
+  dataSourceId?: string,
+): Promise<string[]> {
+  const response = await http.get<{ tables: string[] }>(
+    `/target/metadata/schemas/${encodeURIComponent(schema)}/tables`,
+    { params: dataSourceId ? { dataSourceId } : {} },
+  )
+  return response.data.tables ?? []
 }

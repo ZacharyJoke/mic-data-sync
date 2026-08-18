@@ -5,7 +5,7 @@ import { useSessionStore } from '@/stores/session'
 
 /** 后端统一响应结构：code/message/requestId/details 为约定字段 */
 export interface ApiResponse<T = unknown> {
-  code: number
+  code: number | string
   message: string
   requestId?: string
   details?: unknown
@@ -14,7 +14,7 @@ export interface ApiResponse<T = unknown> {
 
 /** 业务错误摘要：仅包含非敏感信息 */
 export interface ApiErrorInfo {
-  code?: number
+  code?: number | string
   message: string
   requestId?: string
   details?: unknown
@@ -22,11 +22,11 @@ export interface ApiErrorInfo {
 
 /**
  * Axios 基础客户端：
- * - baseURL 固定为后端 API 前缀 /api/v1
+ * - baseURL 跟随部署前缀（Vite base /mic-data-sync/），后端 API 位于 <prefix>/api/v1
  * - withCredentials 携带会话 Cookie
  */
 const http = axios.create({
-  baseURL: '/api/v1',
+  baseURL: `${import.meta.env.BASE_URL}api/v1`,
   withCredentials: true,
   timeout: 15000,
 })
@@ -44,7 +44,10 @@ function getCookie(name: string): string | null {
 http.interceptors.request.use((config) => {
   const method = (config.method ?? 'get').toLowerCase()
   if (method !== 'get') {
-    const token = getCookie('XSRF-TOKEN')
+    // Cookie 名动态读取：同主机多实例各自配置不同 CSRF Cookie 名
+    const session = useSessionStore()
+    const csrfCookieName = session.csrfCookieName || 'XSRF-TOKEN'
+    const token = getCookie(csrfCookieName)
     if (token && !config.headers.get('X-XSRF-TOKEN')) {
       config.headers.set('X-XSRF-TOKEN', token)
     }
@@ -91,7 +94,7 @@ http.interceptors.response.use(
  */
 export function toApiErrorInfo(error: AxiosError<ApiResponse>): ApiErrorInfo {
   const body = error.response?.data
-  if (body && typeof body.code === 'number') {
+  if (body && (typeof body.code === 'number' || typeof body.code === 'string')) {
     return {
       code: body.code,
       message: body.message || `HTTP ${error.response?.status ?? '未知'}`,

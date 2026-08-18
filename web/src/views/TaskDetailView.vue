@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { AxiosError } from 'axios'
 
 import {
   disableTask,
@@ -15,6 +16,7 @@ import {
 import { getTableMetadata } from '@/api/sourceMetadata'
 import { listEndpoints } from '@/api/endpoints'
 import { listTaskRuns, startFullSync, startIncremental, type RunItem } from '@/api/runs'
+import { toApiErrorInfo, type ApiResponse } from '@/api/http'
 import RunSummaryCard from '@/components/run/RunSummaryCard.vue'
 import PageHeader from '@/shared/components/PageHeader.vue'
 import StatusTag from '@/shared/components/StatusTag.vue'
@@ -116,7 +118,11 @@ async function runAction(action: 'full' | 'incremental') {
   }
   const label = action === 'full' ? '首次全量（含自动追赶）' : '手动增量'
   try {
-    await ElMessageBox.confirm(`确认启动「${label}」？`, '确认', { type: 'warning' })
+    const replaceAllHint =
+      action === 'full' && task.value?.writeMode === 'REPLACE_ALL'
+        ? '\n\nREPLACE_ALL 模式不会自动清空目标表，请确认目标表已线下清空。'
+        : ''
+    await ElMessageBox.confirm(`确认启动「${label}」？${replaceAllHint}`, '确认', { type: 'warning' })
   } catch {
     return
   }
@@ -132,8 +138,9 @@ async function runAction(action: 'full' | 'incremental') {
     }
     ElMessage.success('已开始')
     window.setTimeout(load, 1500)
-  } catch {
-    ElMessage.error('启动失败（可能并发名额已满或任务未启用）')
+  } catch (error) {
+    const info = toApiErrorInfo(error as AxiosError<ApiResponse>)
+    ElMessage.error(info.message || '启动失败（可能并发名额已满或任务未启用）')
   } finally {
     operating.value = false
   }
@@ -221,11 +228,24 @@ function readDefinitionSummary(taskItem: TaskItem): string[] {
     lines.push(`源表：${definition.schema ? (definition.schema as string) + '.' : ''}${definition.table}`)
     lines.push(`分页 Key：${((definition.paginationKeys as string[]) ?? []).join('、') || '-'}`)
     lines.push(`更新时间字段：${(definition.updatedTimeField as string) || '未使用'}`)
+    const strategy = (definition.incrementalStrategy as string) || 'TIME_WINDOW'
+    const lookback = (definition.incrementalLookbackMinutes as number) ?? 10
+    lines.push(`增量策略：${strategy === 'DUAL_PHASE' ? '双阶段（主键推进 + 时间窗口）' : '时间窗口'}，回看 ${lookback} 分钟`)
   } else {
     lines.push(`基表：${(definition.baseTable as string) ?? '-'}`)
     lines.push(`SQL：${definition.rawSql}`)
   }
   return lines
+}
+
+function writeModeLabel(taskItem: TaskItem): string {
+  const labels: Record<string, string> = {
+    UPSERT: 'UPSERT（覆盖写入）',
+    UPSERT_NO_OVERWRITE: 'UPSERT_NO_OVERWRITE（冲突跳过）',
+    INSERT_ONLY: 'INSERT_ONLY（追加）',
+    REPLACE_ALL: 'REPLACE_ALL（全量重导）',
+  }
+  return labels[taskItem.writeMode] ?? taskItem.writeMode
 }
 
 function latestRunMeta(): string {
@@ -335,7 +355,11 @@ function latestRunMeta(): string {
         <el-button type="primary" :disabled="operating" data-test="start-full" @click="runAction('full')">
           首次全量
         </el-button>
-        <el-button :disabled="operating" data-test="start-incremental" @click="runAction('incremental')">
+        <el-button
+          :disabled="operating || task.writeMode === 'REPLACE_ALL'"
+          data-test="start-incremental"
+          @click="runAction('incremental')"
+        >
           手动增量
         </el-button>
         <el-button data-test="task-validate" @click="handleValidate">运行校验</el-button>
@@ -381,6 +405,12 @@ function latestRunMeta(): string {
         <p class="task-detail__line">expectedSinkInstanceId：{{ task.expectedSinkInstanceId ?? '-' }}</p>
         <p class="task-detail__line">
           目标表：{{ task.targetSchema ? task.targetSchema + '.' : '' }}{{ task.targetTable }}
+        </p>
+        <p class="task-detail__line">
+          写入模式：{{ writeModeLabel(task) }}
+          <span v-if="task.writeMode === 'REPLACE_ALL'" class="task-detail__hint">
+            （工具不清表，启动前请人工清空目标表）
+          </span>
         </p>
         <p class="task-detail__line">唯一 Key：{{ task.uniqueKeys.join('、') || '-' }}</p>
       </div>

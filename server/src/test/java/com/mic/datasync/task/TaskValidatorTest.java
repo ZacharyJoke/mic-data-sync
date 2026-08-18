@@ -3,9 +3,12 @@ package com.mic.datasync.task;
 import com.mic.datasync.database.DatabaseType;
 import com.mic.datasync.database.metadata.ColumnMetadata;
 import com.mic.datasync.database.metadata.TableMetadata;
+import com.mic.datasync.source.domain.TableReadDefinition;
 import com.mic.datasync.task.TaskValidator.ValidationReport;
+import com.mic.datasync.task.TaskValidator.ValidationReport.Issue;
 import com.mic.datasync.task.TaskValidator.ValidationReport.Severity;
 import com.mic.datasync.task.TaskValidator.ValidationReport.ValidationStage;
+import com.mic.datasync.task.domain.TaskDefinition.WriteMode;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Types;
@@ -155,6 +158,95 @@ class TaskValidatorTest {
         List<ValidationReport.Issue> issues = new ArrayList<>();
         validator.validateMappings(List.of("id", "name"), target,
                 List.of(new FieldMapping("id", "id")), issues);
+
+        assertThat(issues).isEmpty();
+    }
+
+    @Test
+    void updatedTimeFieldWithInsertOnlyIsBlocked() {
+        List<Issue> issues = new ArrayList<>();
+        validator.validateIncrementalCursorConfiguration(
+                new TableReadDefinition("public", "patient", List.of("id", "updated_at"), List.of(),
+                        List.of("id"), "updated_at"),
+                WriteMode.INSERT_ONLY, List.of(), issues);
+
+        assertThat(issues).anySatisfy(issue -> {
+            assertThat(issue.code()).isEqualTo("INCREMENTAL_REQUIRES_UPSERT");
+            assertThat(issue.severity()).isEqualTo(Severity.BLOCKING);
+            assertThat(issue.field()).isEqualTo("writeMode");
+        });
+    }
+
+    @Test
+    void updatedTimeFieldWithUpsertAndUniqueKeyPasses() {
+        List<Issue> issues = new ArrayList<>();
+        validator.validateIncrementalCursorConfiguration(
+                new TableReadDefinition("public", "patient", List.of("id", "updated_at"), List.of(),
+                        List.of("id"), "updated_at"),
+                WriteMode.UPSERT, List.of("id"), issues);
+
+        assertThat(issues).isEmpty();
+    }
+
+    @Test
+    void updatedTimeFieldWithNoOverwriteAndUniqueKeyPasses() {
+        List<Issue> issues = new ArrayList<>();
+        validator.validateIncrementalCursorConfiguration(
+                new TableReadDefinition("public", "patient", List.of("id", "updated_at"), List.of(),
+                        List.of("id"), "updated_at"),
+                WriteMode.UPSERT_NO_OVERWRITE, List.of("id"), issues);
+
+        assertThat(issues).isEmpty();
+    }
+
+    @Test
+    void updatedTimeFieldWithNoOverwriteButNoUniqueKeyIsBlocked() {
+        List<Issue> issues = new ArrayList<>();
+        validator.validateIncrementalCursorConfiguration(
+                new TableReadDefinition("public", "patient", List.of("id", "updated_at"), List.of(),
+                        List.of("id"), "updated_at"),
+                WriteMode.UPSERT_NO_OVERWRITE, List.of(), issues);
+
+        assertThat(issues).anySatisfy(issue -> {
+            assertThat(issue.code()).isEqualTo("INCREMENTAL_REQUIRES_UPSERT");
+            assertThat(issue.severity()).isEqualTo(Severity.BLOCKING);
+            assertThat(issue.field()).isEqualTo("writeMode");
+        });
+    }
+
+    @Test
+    void noUpdatedTimeFieldSkipsIncrementalCheck() {
+        List<Issue> issues = new ArrayList<>();
+        validator.validateIncrementalCursorConfiguration(
+                new TableReadDefinition("public", "patient", List.of("id"), List.of(),
+                        List.of("id"), null),
+                WriteMode.INSERT_ONLY, List.of(), issues);
+
+        assertThat(issues).isEmpty();
+    }
+
+    @Test
+    void replaceAllWithUpdatedTimeFieldIsBlocked() {
+        List<Issue> issues = new ArrayList<>();
+        validator.validateIncrementalCursorConfiguration(
+                new TableReadDefinition("public", "user_role", List.of("user_id", "role_id"), List.of(),
+                        List.of("user_id", "role_id"), "updated_at"),
+                WriteMode.REPLACE_ALL, List.of(), issues);
+
+        assertThat(issues).anySatisfy(issue -> {
+            assertThat(issue.code()).isEqualTo("REPLACE_ALL_NO_INCREMENT");
+            assertThat(issue.severity()).isEqualTo(Severity.BLOCKING);
+            assertThat(issue.field()).isEqualTo("readDefinition.updatedTimeField");
+        });
+    }
+
+    @Test
+    void replaceAllWithoutUpdatedTimeFieldPasses() {
+        List<Issue> issues = new ArrayList<>();
+        validator.validateIncrementalCursorConfiguration(
+                new TableReadDefinition("public", "user_role", List.of("user_id", "role_id"), List.of(),
+                        List.of(), null),
+                WriteMode.REPLACE_ALL, List.of(), issues);
 
         assertThat(issues).isEmpty();
     }

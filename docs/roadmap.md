@@ -1,10 +1,13 @@
 # 路线图
 
-> 最近更新：2026-08-02
+> 最近更新：2026-08-18
 
 ## 当前状态：MVP-I1 候选版本（0.1.0-SNAPSHOT）
 
-已交付：端管理、多数据源、Table/SQL 任务、预检启用、首次全量/手动增量、批次幂等、暂停/继续/安全重试、Sink Token 轮换、结构化诊断、Linux x86_64 分发包。
+已交付：端管理、多数据源、Table/SQL 任务、预检启用、首次全量/手动增量（含双阶段策略）、
+UPSERT / UPSERT_NO_OVERWRITE / INSERT_ONLY / REPLACE_ALL 写入模式、软唯一键、批次幂等、
+批次网络退避重试与 UNKNOWN 恢复、暂停/继续/安全重试、Sink Token 轮换、结构化诊断、
+Linux x86_64 分发包（内置 openGauss/PostgreSQL 驱动）。
 
 ## 近期（P1）
 

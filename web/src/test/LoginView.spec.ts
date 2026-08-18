@@ -38,8 +38,8 @@ describe('LoginView', () => {
         { path: '/', component: { template: '<div>home</div>' } },
       ],
     })
-    // CSRF 端点默认成功
-    httpMock.get.mockResolvedValue({ data: { token: 'test-csrf' } })
+    // CSRF 端点默认成功（返回 Token 与 Cookie 名）
+    httpMock.get.mockResolvedValue({ data: { token: 'test-csrf', csrfCookieName: 'XSRF-TOKEN' } })
   })
 
   it('渲染登录表单', async () => {

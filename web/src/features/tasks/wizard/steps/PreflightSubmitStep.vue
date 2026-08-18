@@ -21,12 +21,19 @@ const props = withDefaults(
 
 const store = useTaskWizardStore()
 
+const WRITE_MODE_LABELS: Record<string, string> = {
+  UPSERT: 'UPSERT（覆盖写入）',
+  UPSERT_NO_OVERWRITE: 'UPSERT_NO_OVERWRITE（冲突跳过）',
+  INSERT_ONLY: 'INSERT_ONLY（追加）',
+  REPLACE_ALL: 'REPLACE_ALL（全量重导，需人工清空目标表）',
+}
+
 const summary = computed(() => [
   { label: '任务名称', value: store.draft.name || '-' },
   { label: '读取模式', value: store.draft.readMode },
   { label: '目标表', value: store.draft.targetTable || '-' },
   { label: '字段映射', value: `${store.draft.fieldMappings.length} 项` },
-  { label: '写入模式', value: store.draft.writeMode },
+  { label: '写入模式', value: WRITE_MODE_LABELS[store.draft.writeMode] ?? store.draft.writeMode },
   { label: 'Sink URL', value: store.draft.remoteSinkUrl || '-' },
 ])
 </script>
@@ -35,6 +42,10 @@ const summary = computed(() => [
   <div class="preflight-submit-step" data-test="preflight-submit-step">
     <div class="preflight-submit-step__summary">
       <h3>任务摘要</h3>
+      <p v-if="store.draft.writeMode === 'REPLACE_ALL'" class="preflight-submit-step__warn" data-test="replace-all-confirm">
+        REPLACE_ALL 任务不会自动清空目标表：请确认已线下清空目标表后再启动首次全量，
+        启动时将校验目标表为空，非空将拒绝执行。
+      </p>
       <dl>
         <div v-for="item in summary" :key="item.label" class="preflight-submit-step__row">
           <dt>{{ item.label }}</dt>
@@ -93,6 +104,16 @@ const summary = computed(() => [
   margin: 0;
   color: var(--mic-text);
   word-break: break-all;
+}
+
+.preflight-submit-step__warn {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--mic-border);
+  border-radius: var(--mic-radius);
+  color: var(--mic-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .preflight-submit-step__actions {

@@ -37,6 +37,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 /**
  * Agent 管理接口（Authorization: Bearer Sink 访问令牌认证）。
@@ -224,14 +227,27 @@ public class AgentController {
                             "fieldMappings", "TARGET_VALIDATION", "为目标必填字段补充映射"));
                 }
             }
-            if (request.writeMode() != null && "UPSERT".equals(request.writeMode())) {
+            if (request.writeMode() != null
+                    && ("UPSERT".equals(request.writeMode())
+                    || "UPSERT_NO_OVERWRITE".equals(request.writeMode()))) {
                 if (request.uniqueKeys() == null || request.uniqueKeys().isEmpty()) {
-                    issues.add(issue("TARGET_UNIQUE_CONSTRAINT_MISSING", "UPSERT 必须配置唯一 Key",
-                            "uniqueKeys", "TARGET_VALIDATION", "为 UPSERT 配置唯一 Key"));
+                    issues.add(issue("TARGET_UNIQUE_CONSTRAINT_MISSING",
+                            "UPSERT / UPSERT_NO_OVERWRITE 必须配置唯一 Key",
+                            "uniqueKeys", "TARGET_VALIDATION", "为写入模式配置唯一 Key"));
                 } else if (!adapter.hasUniqueConstraint(metadata, request.uniqueKeys())) {
                     issues.add(issue("TARGET_UNIQUE_CONSTRAINT_MISSING",
                             "目标表不存在与唯一 Key 匹配的唯一约束",
                             "uniqueKeys", "TARGET_VALIDATION", "在目标表上建立匹配的唯一约束"));
+                }
+            }
+            if ("REPLACE_ALL".equals(request.writeMode())) {
+                // 预检阶段仅提示：目标表非空不阻止创建任务，启动写入时由 sink 端 BLOCKING
+                long rowCount = countRows(connection, request.schema(), request.table());
+                if (rowCount > 0) {
+                    issues.add(warning("SINK_TARGET_NOT_EMPTY",
+                            "REPLACE_ALL 要求目标表为空，但当前存在 " + rowCount
+                                    + " 行数据；启动前请线下清空目标表",
+                            "target", "TARGET_VALIDATION", "启动前人工清空目标表"));
                 }
             }
             if (!adapter.receiptTableExists(connection)) {
@@ -249,12 +265,60 @@ public class AgentController {
         return ResponseEntity.ok(new AgentProtocol.TargetPreflightResponse(valid, issues));
     }
 
+    /** 列出本实例 Sink 目标库可用 Schema。 */
+    @GetMapping("/target/metadata/schemas")
+    public ResponseEntity<?> targetSchemas(@RequestParam String dataSourceId) {
+        return withTargetConnection(dataSourceId, (connection, adapter) ->
+                ResponseEntity.ok(Map.of("schemas", adapter.listSchemas(connection))));
+    }
+
+    /** 列出本实例指定 Schema 下的目标表。 */
+    @GetMapping("/target/metadata/schemas/{schema}/tables")
+    public ResponseEntity<?> targetTables(@PathVariable String schema,
+                                          @RequestParam String dataSourceId) {
+        return withTargetConnection(dataSourceId, (connection, adapter) ->
+                ResponseEntity.ok(Map.of("tables", adapter.listTables(connection, schema))));
+    }
+
+    /** 读取本实例目标表元数据（字段/主键/唯一索引）。 */
+    @GetMapping("/target/metadata/{schema}/{table}")
+    public ResponseEntity<?> targetTableMetadata(@PathVariable String schema,
+                                                 @PathVariable String table,
+                                                 @RequestParam String dataSourceId) {
+        return withTargetConnection(dataSourceId, (connection, adapter) -> {
+            TableMetadata metadata = adapter.readTableMetadata(connection, schema, table);
+            return ResponseEntity.ok(new AgentProtocol.TargetTableMetadata(
+                    metadata.schema(), metadata.table(),
+                    metadata.columns().stream().map(column -> new AgentProtocol.TargetColumn(
+                            column.name(), column.typeName(), column.nullable(), column.primaryKey()))
+                            .toList(),
+                    metadata.primaryKeyColumns(),
+                    metadata.uniqueIndexes()));
+        });
+    }
+
     /** Sink 令牌掩码状态（供控制台多端总览）。 */
     @GetMapping("/sink-token")
     public AgentProtocol.SinkTokenInfo sinkToken() {
         return new AgentProtocol.SinkTokenInfo(
                 sinkTokenService.display().isPresent(),
                 sinkTokenService.display().orElse(""));
+    }
+
+    private ResponseEntity<?> withTargetConnection(String dataSourceId, AgentTargetAction action) {
+        DatabaseConfig target = configService.get(dataSourceId).orElse(null);
+        if (target == null) {
+            return badRequest("目标数据源不存在: " + dataSourceId);
+        }
+        try (Connection connection = connectionFactory.open(target)) {
+            TargetDatabaseAdapter adapter = adapterFactory.targetAdapter(target.databaseType());
+            return action.execute(connection, adapter);
+        } catch (Exception ex) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new ApiError(
+                    ErrorCode.DATABASE_CONNECTION_FAILED.name(),
+                    "目标元数据读取失败: " + safeMessage(ex),
+                    UUID.randomUUID().toString(), Map.of()));
+        }
     }
 
     private String selfEndpointId(DatabaseRole role) {
@@ -289,6 +353,28 @@ public class AgentController {
                                                String stage, String suggestedAction) {
         return new AgentProtocol.PreflightIssue(
                 "BLOCKING", code, message, field, stage, suggestedAction);
+    }
+
+    private AgentProtocol.PreflightIssue warning(String code, String message, String field,
+                                                 String stage, String suggestedAction) {
+        return new AgentProtocol.PreflightIssue(
+                "WARNING", code, message, field, stage, suggestedAction);
+    }
+
+    /** 目标表行数（REPLACE_ALL 预检提示）。 */
+    private long countRows(Connection connection, String schema, String table) throws SQLException {
+        String qualified = (schema == null || schema.isBlank())
+                ? quoteIdentifier(table)
+                : quoteIdentifier(schema) + "." + quoteIdentifier(table);
+        String sql = "SELECT COUNT(*) FROM " + qualified;
+        try (PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet rs = statement.executeQuery()) {
+            return rs.next() ? rs.getLong(1) : 0;
+        }
+    }
+
+    private String quoteIdentifier(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 
     private String safeMessage(Exception ex) {
@@ -334,5 +420,10 @@ public class AgentController {
             String driverType,
             String createdAt,
             String updatedAt) {
+    }
+
+    @FunctionalInterface
+    private interface AgentTargetAction {
+        ResponseEntity<?> execute(Connection connection, TargetDatabaseAdapter adapter) throws Exception;
     }
 }

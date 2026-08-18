@@ -324,7 +324,7 @@ function authSummary(result: EndpointAuthCheckResult | null): string {
           <input
             v-model="form.baseUrl"
             type="text"
-            placeholder="http://sink-host:19090"
+            placeholder="http://sink-host:19090/mic-data-sync"
             :disabled="Boolean(editing?.isSelf)"
           />
         </label>

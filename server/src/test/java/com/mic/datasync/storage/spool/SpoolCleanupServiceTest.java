@@ -35,6 +35,7 @@ class SpoolCleanupServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         RoleProperties properties = new RoleProperties("source,sink", tempDir.toString(),
+                tempDir.resolve("drivers").toString(),
                 new RoleProperties.Source(10, 1),
                 new RoleProperties.Sink(1000, 16 * 1024 * 1024, false));
         service = new SpoolCleanupService(jdbcTemplate, properties);

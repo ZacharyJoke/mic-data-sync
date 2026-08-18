@@ -94,6 +94,7 @@ class AdminAuthIntegrationTest {
         MvcResult result = mockMvc.perform(get("/api/v1/auth/csrf"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty())
+                .andExpect(jsonPath("$.csrfCookieName").value("XSRF-TOKEN"))
                 .andReturn();
         Cookie xsrfCookie = result.getResponse().getCookie("XSRF-TOKEN");
         assertThat(xsrfCookie).isNotNull();

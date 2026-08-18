@@ -31,6 +31,7 @@ class HttpSinkTransportTest {
     private final AtomicReference<String> lastAuthorization = new AtomicReference<>();
     private final AtomicReference<String> lastPayloadHash = new AtomicReference<>();
     private final AtomicReference<String> lastContentEncoding = new AtomicReference<>();
+    private final AtomicReference<String> lastRequestBody = new AtomicReference<>();
 
     private static final Identifiers.InstanceId SOURCE = Identifiers.InstanceId.generate();
     private static final Identifiers.BatchId BATCH = Identifiers.BatchId.generate();
@@ -48,7 +49,7 @@ class HttpSinkTransportTest {
     }
 
     private String baseUrl() {
-        return "http://127.0.0.1:" + server.getAddress().getPort();
+        return "http://127.0.0.1:" + server.getAddress().getPort() + "/mic-data-sync";
     }
 
     private BatchPayload payload() {
@@ -63,10 +64,11 @@ class HttpSinkTransportTest {
     }
 
     private void registerReceiveHandler(int status, String body) {
-        server.createContext("/data/receive/patient", exchange -> {
+        server.createContext("/mic-data-sync/data/receive/patient", exchange -> {
             lastAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             lastPayloadHash.set(exchange.getRequestHeaders().getFirst("X-Payload-Hash"));
             lastContentEncoding.set(exchange.getRequestHeaders().getFirst("Content-Encoding"));
+            lastRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] response = body.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(status, response.length);
             try (OutputStream os = exchange.getResponseBody()) {
@@ -80,7 +82,8 @@ class HttpSinkTransportTest {
     void twoHundredIsConfirmed() {
         registerReceiveHandler(200, "{\"status\":\"SUCCESS\"}");
         SinkTransport.SendResult result = transport.send(new SinkTransport.SendRequest(
-                baseUrl(), "token-abc", payload(), List.of("id"), "hash-1", "IDENTITY"));
+                baseUrl(), "token-abc", payload(), List.of("id"), "UPSERT", "hash-1", "IDENTITY",
+                "transport-bytes".getBytes(StandardCharsets.UTF_8)));
 
         assertThat(result.outcome()).isEqualTo(Outcome.CONFIRMED);
         assertThat(result.httpStatus()).isEqualTo(200);
@@ -90,20 +93,63 @@ class HttpSinkTransportTest {
     }
 
     @Test
+    void requestBodyCarriesWriteModeForConflictSkip() throws Exception {
+        registerReceiveHandler(200, "{\"status\":\"SUCCESS\"}");
+        byte[] transportBytes = objectMapper.writeValueAsBytes(Map.of(
+                "writeMode", "UPSERT_NO_OVERWRITE",
+                "uniqueKeys", List.of("id"),
+                "payload", payload()));
+        transport.send(new SinkTransport.SendRequest(
+                baseUrl(), "token-abc", payload(), List.of("id"),
+                "UPSERT_NO_OVERWRITE", "hash-1", "IDENTITY", transportBytes));
+
+        assertThat(lastRequestBody.get()).isEqualTo(new String(transportBytes, StandardCharsets.UTF_8));
+    }
+
+    @Test
     void fourHundredIsBusinessError() {
         registerReceiveHandler(409, "{\"code\":\"BATCH_HASH_CONFLICT\"}");
         SinkTransport.SendResult result = transport.send(new SinkTransport.SendRequest(
-                baseUrl(), "token", payload(), List.of("id"), "hash", "IDENTITY"));
+                baseUrl(), "token", payload(), List.of("id"), "UPSERT", "hash", "IDENTITY",
+                "transport-bytes".getBytes(StandardCharsets.UTF_8)));
 
         assertThat(result.outcome()).isEqualTo(Outcome.BUSINESS_ERROR);
         assertThat(result.httpStatus()).isEqualTo(409);
+        assertThat(result.errorCode()).isEqualTo("BATCH_HASH_CONFLICT");
+    }
+
+    @Test
+    void businessErrorCarriesSinkErrorMessage() {
+        registerReceiveHandler(400, """
+                {"code":"TARGET_COLUMN_TYPE_MISMATCH","message":"目标字段类型不兼容","requestId":"req-1","details":{}}
+                """);
+        SinkTransport.SendResult result = transport.send(new SinkTransport.SendRequest(
+                baseUrl(), "token", payload(), List.of("id"), "UPSERT", "hash", "IDENTITY",
+                "transport-bytes".getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(result.outcome()).isEqualTo(Outcome.BUSINESS_ERROR);
+        assertThat(result.errorCode()).isEqualTo("TARGET_COLUMN_TYPE_MISMATCH");
+        assertThat(result.message()).isEqualTo("目标字段类型不兼容");
+    }
+
+    @Test
+    void nonJsonErrorBodyKeepsErrorFieldsNull() {
+        registerReceiveHandler(400, "<html>Bad Request</html>");
+        SinkTransport.SendResult result = transport.send(new SinkTransport.SendRequest(
+                baseUrl(), "token", payload(), List.of("id"), "UPSERT", "hash", "IDENTITY",
+                "transport-bytes".getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(result.outcome()).isEqualTo(Outcome.BUSINESS_ERROR);
+        assertThat(result.errorCode()).isNull();
+        assertThat(result.message()).isNull();
     }
 
     @Test
     void connectionRefusedIsUnknown() {
         // 端口未监听
         SinkTransport.SendResult result = transport.send(new SinkTransport.SendRequest(
-                "http://127.0.0.1:1", "token", payload(), List.of("id"), "hash", "IDENTITY"));
+                "http://127.0.0.1:1", "token", payload(), List.of("id"), "UPSERT", "hash", "IDENTITY",
+                "transport-bytes".getBytes(StandardCharsets.UTF_8)));
 
         assertThat(result.outcome()).isEqualTo(Outcome.UNKNOWN);
         assertThat(result.errorCode()).isEqualTo("TRANSPORT_UNAVAILABLE");
@@ -111,7 +157,7 @@ class HttpSinkTransportTest {
 
     @Test
     void receiptQueryFoundReturnsHash() throws Exception {
-        server.createContext("/data/receipt/" + SOURCE + "/" + BATCH, exchange -> {
+        server.createContext("/mic-data-sync/data/receipt/" + SOURCE + "/" + BATCH, exchange -> {
             byte[] response = "{\"found\":true,\"payloadHash\":\"hash-abc\"}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, response.length);
             try (OutputStream os = exchange.getResponseBody()) {
@@ -130,7 +176,7 @@ class HttpSinkTransportTest {
 
     @Test
     void receiptQueryNotFoundReturnsFoundFalse() {
-        server.createContext("/data/receipt/" + SOURCE + "/" + BATCH, exchange -> {
+        server.createContext("/mic-data-sync/data/receipt/" + SOURCE + "/" + BATCH, exchange -> {
             byte[] response = "{\"found\":false}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, response.length);
             try (OutputStream os = exchange.getResponseBody()) {

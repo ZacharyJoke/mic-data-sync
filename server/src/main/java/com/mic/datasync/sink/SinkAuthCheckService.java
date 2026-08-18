@@ -1,5 +1,6 @@
 package com.mic.datasync.sink;
 
+import com.mic.datasync.endpoint.EndpointService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -21,15 +22,18 @@ public class SinkAuthCheckService {
     private final SinkTokenService sinkTokenService;
     private final SourceSinkTokenService sourceTokenService;
     private final int serverPort;
+    private final String contextPath;
     private final HttpClient httpClient =
             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
     public SinkAuthCheckService(SinkTokenService sinkTokenService,
                                 SourceSinkTokenService sourceTokenService,
-                                @Value("${server.port:19090}") int serverPort) {
+                                @Value("${server.port:19090}") int serverPort,
+                                @Value("${server.servlet.context-path:}") String contextPath) {
         this.sinkTokenService = sinkTokenService;
         this.sourceTokenService = sourceTokenService;
         this.serverPort = serverPort;
+        this.contextPath = contextPath;
     }
 
     public SinkAuthCheck check(String sinkUrl) {
@@ -54,7 +58,7 @@ public class SinkAuthCheckService {
         if (provided != null && !provided.isBlank()) {
             return provided;
         }
-        return serverPort > 0 ? "http://127.0.0.1:" + serverPort : null;
+        return serverPort > 0 ? EndpointService.localBaseUrl(serverPort, contextPath) : null;
     }
 
     private String callHandshake(String sinkUrl, String token) {

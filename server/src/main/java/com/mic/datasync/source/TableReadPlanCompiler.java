@@ -5,6 +5,7 @@ import com.mic.datasync.database.metadata.ColumnMetadata;
 import com.mic.datasync.database.metadata.TableMetadata;
 import com.mic.datasync.source.domain.FilterCondition;
 import com.mic.datasync.source.domain.ReadPlan;
+import com.mic.datasync.source.domain.ReadPlan.PaginationStrategy;
 import com.mic.datasync.source.domain.TableReadDefinition;
 import org.springframework.stereotype.Component;
 
@@ -38,6 +39,30 @@ public class TableReadPlanCompiler {
      * @throws IllegalArgumentException 表/字段不存在、分页键不稳定或过滤字段非法时抛出
      */
     public ReadPlan compile(TableReadDefinition definition, TableMetadata metadata) {
+        return compile(definition, metadata, PaginationStrategy.KEYSET, false);
+    }
+
+    /**
+     * 编译 Table 读取定义（按分页策略分级校验）。
+     *
+     * <p>KEYSET：分页键必填且须与主键/唯一索引完全一致（保证游标不重不漏）；
+     * OFFSET：REPLACE_ALL 全量重导专用，分页键可为空、不校验唯一性，
+     * 运行时使用 LIMIT/OFFSET 快照分页。</p>
+     *
+     * @param softUniqueAccepted 允许非约束组合分页键（由校验层完成唯一性实测后放行）
+     */
+    public ReadPlan compile(TableReadDefinition definition, TableMetadata metadata,
+                            PaginationStrategy strategy) {
+        return compile(definition, metadata, strategy, strategy == PaginationStrategy.OFFSET);
+    }
+
+    /**
+     * 编译 Table 读取定义（完整参数版本）。
+     *
+     * @param softUniqueAccepted 允许非约束组合分页键；为 false 时非约束组合直接拒绝
+     */
+    public ReadPlan compile(TableReadDefinition definition, TableMetadata metadata,
+                            PaginationStrategy strategy, boolean softUniqueAccepted) {
         if (metadata == null) {
             throw new IllegalArgumentException("源表元数据不可用");
         }
@@ -53,14 +78,19 @@ public class TableReadPlanCompiler {
                 : definition.selectedColumns();
         validateColumnsExist(metadata, columns, "读取字段");
 
-        // 分页键必须存在且组合唯一（主键或唯一索引）
         List<String> paginationKeys = definition.paginationKeys();
-        if (paginationKeys.isEmpty()) {
-            throw new IllegalArgumentException("必须配置稳定且唯一的分页 Key");
-        }
-        validateColumnsExist(metadata, paginationKeys, "分页 Key");
-        if (!isStableUniqueKey(metadata, paginationKeys)) {
-            throw new IllegalArgumentException("分页 Key 组合必须与主键或唯一索引完全一致");
+        if (strategy == PaginationStrategy.OFFSET) {
+            // OFFSET 快照分页：不要求唯一，分批字段可为空；字段仍须存在
+            validateColumnsExist(metadata, paginationKeys, "分批字段");
+        } else {
+            // 分页键必须存在且组合唯一（主键或唯一索引）
+            if (paginationKeys.isEmpty()) {
+                throw new IllegalArgumentException("必须配置稳定且唯一的分页 Key");
+            }
+            validateColumnsExist(metadata, paginationKeys, "分页 Key");
+            if (!softUniqueAccepted && !isStableUniqueKey(metadata, paginationKeys)) {
+                throw new IllegalArgumentException("分页 Key 组合必须与主键或唯一索引完全一致");
+            }
         }
 
         // 更新时间字段与过滤字段必须存在
@@ -75,7 +105,9 @@ public class TableReadPlanCompiler {
         String fingerprint = structureFingerprint(table, metadata);
         return new ReadPlan(
                 "TABLE", schema, table, columns, definition.filters(),
-                paginationKeys, definition.updatedTimeField(), previewSql, fingerprint);
+                paginationKeys, definition.updatedTimeField(),
+                definition.incrementalStrategy(), definition.incrementalLookbackMinutes(),
+                previewSql, fingerprint, strategy);
     }
 
     /** 生成只读预览 SQL（参数占位，LIMIT 20）。 */

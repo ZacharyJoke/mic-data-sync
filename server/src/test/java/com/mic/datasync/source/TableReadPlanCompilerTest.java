@@ -4,6 +4,7 @@ import com.mic.datasync.database.metadata.ColumnMetadata;
 import com.mic.datasync.database.metadata.TableMetadata;
 import com.mic.datasync.source.domain.FilterCondition;
 import com.mic.datasync.source.domain.ReadPlan;
+import com.mic.datasync.source.domain.ReadPlan.PaginationStrategy;
 import com.mic.datasync.source.domain.TableReadDefinition;
 import org.junit.jupiter.api.Test;
 
@@ -89,5 +90,35 @@ class TableReadPlanCompilerTest {
 
         ReadPlan plan = compiler.compile(definition, PATIENT);
         assertThat(plan.columns()).containsExactly("id", "name", "updated_time");
+    }
+
+    @Test
+    void offsetStrategyAllowsEmptyOrNonUniquePaginationKeys() {
+        // REPLACE_ALL：分页键可为空
+        TableReadDefinition emptyKeys = new TableReadDefinition(
+                "public", "patient", List.of("id", "name"), List.of(),
+                List.of(), null);
+        ReadPlan plan = compiler.compile(emptyKeys, PATIENT, PaginationStrategy.OFFSET);
+
+        assertThat(plan.pagination()).isEqualTo(PaginationStrategy.OFFSET);
+        assertThat(plan.paginationKeys()).isEmpty();
+
+        // REPLACE_ALL：非唯一组合也放行
+        TableReadDefinition nonUniqueKeys = new TableReadDefinition(
+                "public", "patient", List.of("id", "name"), List.of(),
+                List.of("name"), null);
+        assertThat(compiler.compile(nonUniqueKeys, PATIENT, PaginationStrategy.OFFSET).paginationKeys())
+                .containsExactly("name");
+    }
+
+    @Test
+    void softUniqueAcceptedAllowsNonConstrainedPaginationKey() {
+        TableReadDefinition definition = new TableReadDefinition(
+                "public", "patient", List.of("id", "name"), List.of(),
+                List.of("name"), null);
+
+        ReadPlan plan = compiler.compile(definition, PATIENT, PaginationStrategy.KEYSET, true);
+
+        assertThat(plan.paginationKeys()).containsExactly("name");
     }
 }

@@ -60,7 +60,7 @@ docker exec -it mic-sync-opengauss bash -c \
 JDBC URL:  jdbc:opengauss://<服务器IP>:15432/mic_sync
 用户名:    gaussdb
 密码:      ChangeMe@123
-驱动 JAR:  opengauss-jdbc-*.jar（放到客户端 data/drivers）
+驱动 JAR:  opengauss-jdbc-3.0.0.jar（分发包默认内置；开发环境放到 data/drivers）
 ```
 
 ## 二、KingbaseES（需授权镜像）
@@ -109,7 +109,7 @@ docker images | grep -i kingbase
 ```text
 JDBC URL:  jdbc:kingbase8://<服务器IP>:54321/<dbname>
 用户名:    system（默认超级用户）
-驱动 JAR:  kingbase8-*.jar（放到客户端 data/drivers）
+驱动 JAR:  kingbase8-8.6.0.jar（商业授权，需自行获取；分发包内置 openGauss/PostgreSQL 驱动，KingbaseES 需放入 data/drivers）
 ```
 
 ## 三、安全提示

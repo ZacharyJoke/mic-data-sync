@@ -107,11 +107,15 @@ public class TaskService {
         return get(taskId).orElseThrow();
     }
 
-    /** 更新任务。任务已启用/暂停/禁用/阻塞时，语义字段（读取定义、映射、目标、写入模式）锁定。 */
+    /** 更新任务。已启用/已暂停（可能触发或恢复运行）的任务，语义字段锁定；
+     *  草稿、已禁用、已阻塞任务无活动同步，允许编辑语义字段后重新启用。 */
     @Transactional
     public TaskRecord update(Identifiers.TaskId taskId, UpdateTaskCommand command) {
         TaskRecord existing = get(taskId).orElseThrow(() -> new IllegalArgumentException("任务不存在"));
-        if (existing.lifecycleStatus() != LifecycleStatus.DRAFT) {
+        if (existing.lifecycleStatus() == LifecycleStatus.ENABLED
+                || existing.lifecycleStatus() == LifecycleStatus.PAUSED
+                || existing.lifecycleStatus() == LifecycleStatus.DELETING
+                || existing.lifecycleStatus() == LifecycleStatus.DELETED) {
             boolean semanticChanged = command.readDefinition() != null
                     || command.fieldMappings() != null
                     || command.uniqueKeys() != null
@@ -122,7 +126,7 @@ public class TaskService {
                     || command.sourceDataSourceId() != null
                     || command.targetDataSourceId() != null;
             if (semanticChanged) {
-                throw new IllegalStateException("任务已启用，语义字段不允许直接编辑，请复制或重建任务");
+                throw new IllegalStateException("任务已启用或已暂停，语义字段不允许直接编辑，请复制或重建任务");
             }
         }
         String now = Instant.now().toString();

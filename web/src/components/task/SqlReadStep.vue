@@ -18,6 +18,8 @@ export interface SqlReadDefinition {
   resultColumns: string[]
   paginationKeys: string[]
   updatedTimeField: string
+  incrementalStrategy: 'TIME_WINDOW' | 'DUAL_PHASE'
+  incrementalLookbackMinutes: number
 }
 
 const sql = ref('')
@@ -31,6 +33,8 @@ const form = reactive<SqlReadDefinition>({
   resultColumns: [],
   paginationKeys: [],
   updatedTimeField: '',
+  incrementalStrategy: 'TIME_WINDOW',
+  incrementalLookbackMinutes: 10,
 })
 
 onMounted(() => {
@@ -43,6 +47,8 @@ onMounted(() => {
   form.resultColumns = [...(props.initial.resultColumns ?? [])]
   form.paginationKeys = [...(props.initial.paginationKeys ?? [])]
   form.updatedTimeField = props.initial.updatedTimeField ?? ''
+  form.incrementalStrategy = props.initial.incrementalStrategy ?? 'TIME_WINDOW'
+  form.incrementalLookbackMinutes = props.initial.incrementalLookbackMinutes ?? 10
 })
 
 const showPlanFields = computed(
@@ -127,6 +133,17 @@ watch(
             <option value="">不使用</option>
             <option v-for="column in columnOptions()" :key="column.name" :value="column.name">{{ column.name }}</option>
           </select>
+        </label>
+        <label class="sql-read-step__field" data-test="incremental-strategy">
+          增量策略
+          <select v-model="form.incrementalStrategy">
+            <option value="TIME_WINDOW">时间窗口（默认）</option>
+            <option value="DUAL_PHASE">双阶段：主键推进新增 + 时间窗口补更新</option>
+          </select>
+        </label>
+        <label class="sql-read-step__field" data-test="incremental-lookback">
+          增量回看窗口（分钟）
+          <input v-model.number="form.incrementalLookbackMinutes" type="number" min="1" />
         </label>
       </div>
     </template>

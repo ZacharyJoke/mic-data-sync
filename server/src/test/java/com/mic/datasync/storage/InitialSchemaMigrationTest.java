@@ -48,6 +48,8 @@ class InitialSchemaMigrationTest {
         Flyway flyway = Flyway.configure()
                 .dataSource(url, null, null)
                 .locations("classpath:db/migration")
+                // 与 application.yml 保持一致：V010 重建 task 表需要 PRAGMA 在事务外执行
+                .mixed(true)
                 .load();
 
         // 首次迁移：创建全部表
@@ -76,9 +78,9 @@ class InitialSchemaMigrationTest {
             assertThat(queryColumnNames(conn, "run")).contains("previous_run_id");
         }
 
-        // 迁移历史：V001-V007 + V008 移除管理令牌，统一使用 Sink 访问令牌
+        // 迁移历史：V001-V010 + V011 写入模式枚举扩展（REPLACE_ALL）
         MigrationInfo[] applied = flyway.info().applied();
-        assertThat(applied).hasSize(8);
+        assertThat(applied).hasSize(11);
         // Flyway 将版本号规范化为定长字符串（"1" → "001"）
         assertThat(applied[0].getVersion().getVersion()).isEqualTo("001");
         assertThat(applied[1].getVersion().getVersion()).isEqualTo("002");
@@ -88,6 +90,9 @@ class InitialSchemaMigrationTest {
         assertThat(applied[5].getVersion().getVersion()).isEqualTo("006");
         assertThat(applied[6].getVersion().getVersion()).isEqualTo("007");
         assertThat(applied[7].getVersion().getVersion()).isEqualTo("008");
+        assertThat(applied[8].getVersion().getVersion()).isEqualTo("009");
+        assertThat(applied[9].getVersion().getVersion()).isEqualTo("010");
+        assertThat(applied[10].getVersion().getVersion()).isEqualTo("011");
     }
 
     /** 查询 SQLite 中所有业务表名。 */

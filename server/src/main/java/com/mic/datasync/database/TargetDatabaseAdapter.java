@@ -15,6 +15,12 @@ public interface TargetDatabaseAdapter extends WriterDialect {
     /** 适配的数据库类型。 */
     DatabaseType databaseType();
 
+    /** 列出非系统 Schema。 */
+    List<String> listSchemas(Connection connection) throws SQLException;
+
+    /** 列出指定 Schema 下的业务表。 */
+    List<String> listTables(Connection connection, String schema) throws SQLException;
+
     /** 读取目标表元数据。 */
     TableMetadata readTableMetadata(Connection connection, String schema, String table) throws SQLException;
 

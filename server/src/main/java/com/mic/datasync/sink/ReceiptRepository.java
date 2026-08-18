@@ -75,4 +75,15 @@ public class ReceiptRepository {
             statement.executeUpdate();
         }
     }
+
+    /** 指定 Run 是否已有回执（用于判断 REPLACE_ALL 的首个真正写入批次）。 */
+    public boolean existsByRun(Connection connection, String runId) throws SQLException {
+        String sql = "SELECT 1 FROM mic_sync_batch_receipt WHERE run_id = ? LIMIT 1";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, runId);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
 }

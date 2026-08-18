@@ -2,13 +2,29 @@
 server:
   # 服务端口（环境变量 MIC_SYNC_SERVER_PORT）
   port: 19090
+  servlet:
+    # URL 前缀：开发/测试/生产统一经 nginx 以 /mic-data-sync/ 转发（环境变量 MIC_SYNC_CONTEXT_PATH）
+    context-path: /mic-data-sync
+    session:
+      cookie:
+        # 会话 Cookie 名称：同主机多实例必须配置不同值（环境变量 MIC_SYNC_SESSION_COOKIE），
+        # 避免浏览器同域共享同名 Cookie 导致会话互顶（后登录实例顶掉先登录实例）
+        name: ${MIC_SYNC_SESSION_COOKIE:JSESSIONID}
 
 mic:
   sync:
     # 部署角色：source / sink / source,sink（环境变量 MIC_SYNC_ROLES）
     roles: source,sink
-    # 本地数据目录（环境变量 MIC_SYNC_DATA_DIR）
-    data-dir: ./data
+    # 持久数据目录（环境变量 MIC_SYNC_DATA_DIR；生产默认 /data/mic-data-sync/data）
+    data-dir: ${MIC_SYNC_DATA_DIR:/data/mic-data-sync/data}
+    # 管理控制台 CSRF Cookie 名称：同主机多实例必须配置不同值（环境变量 MIC_SYNC_CSRF_COOKIE），
+    # 与 Session Cookie 一起避免浏览器同域共享同名 Cookie 导致会话/CSRF 互顶
+    security:
+      csrf-cookie-name: ${MIC_SYNC_CSRF_COOKIE:XSRF-TOKEN}
+    # 应用日志目录（环境变量 MIC_SYNC_LOG_DIR；生产默认 /data/mic-data-sync/logs）
+    log-dir: ${MIC_SYNC_LOG_DIR:/data/mic-data-sync/logs}
+    # JDBC 驱动目录（环境变量 MIC_SYNC_DRIVER_DIR；生产默认 /data/mic-data-sync/drivers）
+    driver-dir: ${MIC_SYNC_DRIVER_DIR:/data/mic-data-sync/drivers}
     # Master Key：默认在 ${dataDir}/secret/master.key 生成；
     # 外部提供用环境变量 MIC_SYNC_MASTER_KEY（Base64 编码 32 字节）
     # master-key: ...

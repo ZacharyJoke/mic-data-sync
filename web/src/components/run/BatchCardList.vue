@@ -16,7 +16,7 @@ function statusLabel(status: string): string {
   return labels[status] ?? status
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string | null): string {
   return formatDateTime(value)
 }
 </script>
@@ -36,6 +36,7 @@ function formatTime(value: string): string {
               <th>行数</th>
               <th>尝试</th>
               <th>哈希</th>
+              <th>时间水位</th>
               <th>创建时间</th>
             </tr>
           </thead>
@@ -53,6 +54,7 @@ function formatTime(value: string): string {
               <td>{{ batch.rowCount }}</td>
               <td>{{ batch.attemptCount }}</td>
               <td class="batch-list__hash" :title="batch.payloadHash">{{ batch.payloadHash }}</td>
+              <td>{{ formatTime(batch.timeWatermark) }}</td>
               <td>{{ formatTime(batch.createdAt) }}</td>
             </tr>
           </tbody>
@@ -70,6 +72,7 @@ function formatTime(value: string): string {
           <span class="batch-list__status">{{ statusLabel(batch.status) }}</span>
         </div>
         <p class="batch-card__meta">行数 {{ batch.rowCount }} · 尝试 {{ batch.attemptCount }} 次</p>
+        <p class="batch-card__meta">时间水位 {{ formatTime(batch.timeWatermark) }}</p>
         <p class="batch-card__meta batch-card__hash">{{ batch.payloadHash }}</p>
       </div>
     </template>

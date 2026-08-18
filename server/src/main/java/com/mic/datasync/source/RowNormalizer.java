@@ -8,7 +8,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Set;
 
@@ -104,10 +103,13 @@ public class RowNormalizer {
             return instant.toString();
         }
         if (value instanceof java.sql.Timestamp timestamp) {
-            return timestamp.toInstant().toString();
+            // 无时区时间：保留本地时间原样输出。toInstant() 会按应用时区转 UTC，
+            // 导致时间偏移 8 小时，并把公元 1 年前的占位日期（如 0001-01-01）推入
+            // 公元 0 年，超出 Vastbase/openGauss 范围而拒绝写入。
+            return timestamp.toLocalDateTime().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         }
         if (value instanceof LocalDateTime localDateTime) {
-            return localDateTime.toInstant(ZoneOffset.UTC).toString();
+            return localDateTime.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         }
         if (value instanceof String string) {
             return string;

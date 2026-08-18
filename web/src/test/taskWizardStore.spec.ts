@@ -25,7 +25,7 @@ describe('taskWizardStore', () => {
 
   it('persist 清除密码和令牌后写入 localStorage', () => {
     const store = useTaskWizardStore()
-    store.patch({ name: 'patient-sync', remoteSinkUrl: 'http://sink:19090' })
+    store.patch({ name: 'patient-sync', remoteSinkUrl: 'http://sink:19090/mic-data-sync' })
     store.persist()
 
     const stored = JSON.parse(localStorage.getItem(TASK_WIZARD_STORAGE_KEY) ?? '{}')

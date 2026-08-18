@@ -20,6 +20,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Types;
 import java.time.Instant;
 import java.util.List;
@@ -29,6 +31,9 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -65,6 +70,10 @@ class BatchReceiveContractTest {
 
     private static final Identifiers.InstanceId SOURCE = Identifiers.InstanceId.generate();
     private static final Identifiers.InstanceId SINK = Identifiers.InstanceId.generate();
+    @Mock
+    private PreparedStatement statement;
+    @Mock
+    private ResultSet resultSet;
 
     @BeforeEach
     void setUp() {
@@ -111,7 +120,8 @@ class BatchReceiveContractTest {
                 List.of("id"), "hash-abc");
 
         assertThat(result.duplicate()).isTrue();
-        verify(batchWriter, never()).upsert(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(batchWriter, never()).upsert(any(), any(), any(), any(), any(), any(), any(),
+                any(), anyBoolean(), anyBoolean());
         verify(receiptRepository, never()).insert(any(), any());
         verify(connection, never()).commit();
     }
@@ -149,7 +159,8 @@ class BatchReceiveContractTest {
         assertThat(result.duplicate()).isFalse();
         assertThat(result.status()).isEqualTo("SUCCESS");
         verify(connection).setAutoCommit(false);
-        verify(batchWriter).upsert(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(batchWriter).upsert(any(), any(), any(), any(), any(), any(), any(),
+                any(), anyBoolean(), anyBoolean());
         verify(receiptRepository).insert(any(), any());
         verify(connection).commit();
     }
@@ -160,7 +171,8 @@ class BatchReceiveContractTest {
         when(adapter.hasUniqueConstraint(any(), any())).thenReturn(true);
         when(receiptRepository.findByBatch(any(), any(), any())).thenReturn(Optional.empty());
         org.mockito.Mockito.doThrow(new java.sql.SQLException("目标约束冲突"))
-                .when(batchWriter).upsert(any(), any(), any(), any(), any(), any(), any(), any());
+                .when(batchWriter).upsert(any(), any(), any(), any(), any(), any(), any(),
+                        any(), anyBoolean(), anyBoolean());
 
         assertThatThrownBy(() -> service.receiveWithConnection(
                 connection, adapter, payload("44444444-4444-4444-4444-444444444444"),
@@ -169,6 +181,36 @@ class BatchReceiveContractTest {
 
         verify(connection).rollback();
         verify(receiptRepository, never()).insert(any(), any());
+    }
+
+    @Test
+    void noOverwriteModePassesSkipOnConflictToWriter() throws Exception {
+        when(adapter.readTableMetadata(any(), any(), any())).thenReturn(patientMetadata());
+        when(adapter.hasUniqueConstraint(any(), any())).thenReturn(true);
+        when(receiptRepository.findByBatch(any(), any(), any())).thenReturn(Optional.empty());
+
+        BatchReceiveService.ReceiveResult result = service.receiveWithConnection(
+                connection, adapter, payload("66666666-6666-6666-6666-666666666666"),
+                List.of("id"), true, false, "hash-abc");
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        verify(batchWriter).upsert(any(), any(), any(), any(), any(), any(), any(),
+                any(), eq(true), eq(false));
+    }
+
+    @Test
+    void postgresProtocolPassedThroughToWriter() throws Exception {
+        when(adapter.readTableMetadata(any(), any(), any())).thenReturn(patientMetadata());
+        when(adapter.hasUniqueConstraint(any(), any())).thenReturn(true);
+        when(receiptRepository.findByBatch(any(), any(), any())).thenReturn(Optional.empty());
+
+        BatchReceiveService.ReceiveResult result = service.receiveWithConnection(
+                connection, adapter, payload("77777777-7777-7777-7777-777777777777"),
+                List.of("id"), true, true, "hash-abc");
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        verify(batchWriter).upsert(any(), any(), any(), any(), any(), any(), any(),
+                any(), eq(true), eq(true));
     }
 
     @Test
@@ -184,6 +226,78 @@ class BatchReceiveContractTest {
                         .isEqualTo("TARGET_UNIQUE_CONSTRAINT_MISSING"));
 
         verify(connection, never()).setAutoCommit(false);
+    }
+
+    @Test
+    void replaceAllRejectsNonEmptyTarget() throws Exception {
+        when(adapter.readTableMetadata(any(), any(), any())).thenReturn(patientMetadata());
+        when(receiptRepository.findByBatch(any(), any(), any())).thenReturn(Optional.empty());
+        when(receiptRepository.existsByRun(any(), anyString())).thenReturn(false);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.executeQuery()).thenReturn(resultSet);
+        when(resultSet.next()).thenReturn(true);
+        when(resultSet.getLong(1)).thenReturn(5L);
+
+        assertThatThrownBy(() -> service.receiveWithConnection(
+                connection, adapter, payload("88888888-8888-8888-8888-888888888888"),
+                List.of(), false, false, true, "hash-abc"))
+                .isInstanceOf(BatchReceiveService.ReceiveException.class)
+                .satisfies(ex -> assertThat(((BatchReceiveService.ReceiveException) ex).errorCode())
+                        .isEqualTo("SINK_TARGET_NOT_EMPTY"));
+
+        verify(batchWriter, never()).upsert(any(), any(), any(), any(), any(), any(), any(),
+                any(), anyBoolean(), anyBoolean());
+        verify(connection, never()).commit();
+    }
+
+    @Test
+    void replaceAllAcceptsEmptyTargetAndWrites() throws Exception {
+        when(adapter.readTableMetadata(any(), any(), any())).thenReturn(patientMetadata());
+        when(receiptRepository.findByBatch(any(), any(), any())).thenReturn(Optional.empty());
+        when(receiptRepository.existsByRun(any(), anyString())).thenReturn(false);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.executeQuery()).thenReturn(resultSet);
+        when(resultSet.next()).thenReturn(false);
+
+        BatchReceiveService.ReceiveResult result = service.receiveWithConnection(
+                connection, adapter, payload("99999999-9999-9999-9999-999999999999"),
+                List.of(), false, false, true, "hash-abc");
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        verify(batchWriter).upsert(any(), any(), any(), any(), any(), any(), any(),
+                any(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    void replaceAllReplaySkipsEmptyCheck() throws Exception {
+        when(adapter.readTableMetadata(any(), any(), any())).thenReturn(patientMetadata());
+        when(receiptRepository.findByBatch(any(), any(), any())).thenReturn(Optional.of(
+                new BatchReceipt(SOURCE.toString(), "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "t", "r", 1, "hash-abc", Instant.now())));
+
+        BatchReceiveService.ReceiveResult result = service.receiveWithConnection(
+                connection, adapter, payload("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                List.of(), false, false, true, "hash-abc");
+
+        assertThat(result.duplicate()).isTrue();
+        verify(receiptRepository, never()).existsByRun(any(), anyString());
+        verify(batchWriter, never()).upsert(any(), any(), any(), any(), any(), any(), any(),
+                any(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    void replaceAllLaterBatchSkipsEmptyCheckWhenRunHasReceipts() throws Exception {
+        when(adapter.readTableMetadata(any(), any(), any())).thenReturn(patientMetadata());
+        when(receiptRepository.findByBatch(any(), any(), any())).thenReturn(Optional.empty());
+        when(receiptRepository.existsByRun(any(), anyString())).thenReturn(true);
+
+        BatchReceiveService.ReceiveResult result = service.receiveWithConnection(
+                connection, adapter, payload("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                List.of(), false, false, true, "hash-abc");
+
+        assertThat(result.status()).isEqualTo("SUCCESS");
+        // 该 run 已有回执：不再执行目标表空表校验（不触发 COUNT 查询）
+        verify(connection, never()).prepareStatement(anyString());
     }
 
     /** 真实数据库幂等契约测试（三方向 E2E 时启用）。 */

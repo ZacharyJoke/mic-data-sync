@@ -1,6 +1,11 @@
 # 安装部署手册（Linux x86_64）
 
-> 最近更新：2026-08-02
+> 最近更新：2026-08-18
+
+## 部署方式
+
+本手册覆盖裸机/虚拟机 + systemd 的安装方式。容器化部署与反向代理说明见仓库
+`distribution/` 下的 nginx 配置样例；三种方式的数据目录语义一致。
 
 ## 环境要求
 
@@ -10,10 +15,11 @@
 
 ## 安装步骤
 
-1. 解压分发包：
+1. 创建安装目录并解压分发包：
 
 ```bash
-tar -xzf mic-data-sync-0.1.0-linux.tar.gz -C /opt/mic-data-sync
+sudo mkdir -p /opt/mic-data-sync
+sudo tar -xzf mic-data-sync-0.1.0-linux-x86_64.tar.gz -C /opt/mic-data-sync
 ```
 
 2. 确认 Java 21：
@@ -22,9 +28,11 @@ tar -xzf mic-data-sync-0.1.0-linux.tar.gz -C /opt/mic-data-sync
 java -version   # 需为 21
 ```
 
-3. 放置数据库驱动：将 KingbaseES/openGauss JDBC 驱动 JAR 放入
-   `${MIC_SYNC_DATA_DIR}/drivers`（默认 `/opt/mic-data-sync/data/drivers`；
-   首次启动会自动创建该目录并生成说明文件）。
+3. 数据库驱动：分发包默认内置 `opengauss-jdbc-3.0.0.jar` 与
+   `postgresql-42.7.13.jar`（Vastbase 等 openGauss 兼容库）；KingbaseES 驱动为
+   商业授权组件，需将 `kingbase8-8.6.0.jar` 放入
+   `${MIC_SYNC_DRIVER_DIR}`（默认 `/opt/mic-data-sync/drivers`；首次启动会自动
+   创建该目录并生成说明文件）。
 
 4. 启动（角色默认 `source,sink`）：
 
@@ -39,18 +47,25 @@ export MIC_SYNC_ADMIN_PASSWORD='<强密码>'   # 首次启动初始化管理员
 curl http://127.0.0.1:19090/actuator/health/readiness
 ```
 
+应用统一使用 `/mic-data-sync/` URL 前缀，完整就绪地址为
+`http://127.0.0.1:19090/mic-data-sync/actuator/health/readiness`。
+
 ## 常用配置（环境变量）
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `MIC_SYNC_SERVER_PORT` | `19090` | HTTP 端口 |
+| `MIC_SYNC_CONTEXT_PATH` | `/mic-data-sync` | URL 前缀（统一） |
 | `MIC_SYNC_ROLES` | `source,sink` | 部署角色：`source` / `sink` / `source,sink` |
 | `MIC_SYNC_DATA_DIR` | `./data` | 数据目录（SQLite、Master Key、Spool、日志） |
+| `MIC_SYNC_LOG_DIR` | `${dataDir}/logs` | 应用日志目录 |
+| `MIC_SYNC_DRIVER_DIR` | `${dataDir}/drivers` | JDBC 驱动目录 |
 | `MIC_SYNC_ADMIN_PASSWORD` | 无 | 首次启动初始化管理员 |
 | `MIC_SYNC_MASTER_KEY` | 自动生成 | Base64 编码 32 字节 Master Key |
 | `MIC_SYNC_SINK_TOKEN` | 无 | Source 访问 Sink 的全局令牌，可在 Web UI 按端覆盖 |
 | `MIC_SYNC_SOURCE_MAX_TASKS` | `10` | Source 最大任务数 |
 | `MIC_SYNC_SOURCE_MAX_ACTIVE_RUNS` | `1` | 全局最大活动 Run |
+| `MIC_SYNC_SESSION_COOKIE` / `MIC_SYNC_CSRF_COOKIE` | `JSESSIONID` / `XSRF-TOKEN` | 同主机多实例必须配置不同值 |
 
 ## systemd 托管
 

@@ -37,7 +37,7 @@ http_code() {
 echo "==> 等待应用就绪（轮询 readiness）"
 ready=0
 for _ in $(seq 1 60); do
-  if [ "$(http_code /actuator/health/readiness 2>/dev/null)" = "200" ]; then
+  if [ "$(http_code /mic-data-sync/actuator/health/readiness 2>/dev/null)" = "200" ]; then
     ready=1
     break
   fi
@@ -61,13 +61,13 @@ check_ok() {
 }
 
 echo "==> [1/3] 就绪探针"
-check_ok "readiness" /actuator/health/readiness
+check_ok "readiness" /mic-data-sync/actuator/health/readiness
 
 echo "==> [2/3] 系统接口"
-check_ok "system ping" /api/v1/system/ping
+check_ok "system ping" /mic-data-sync/api/v1/system/ping
 
 echo "==> [3/3] SPA 首页"
-body=$(curl -s "http://127.0.0.1:$PORT/")
+body=$(curl -s "http://127.0.0.1:$PORT/mic-data-sync/")
 if printf '%s' "$body" | grep -q 'id="app"'; then
   echo "通过：首页包含前端根节点 id=\"app\""
 else

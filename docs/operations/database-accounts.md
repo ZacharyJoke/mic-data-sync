@@ -1,6 +1,6 @@
 # 数据库账号与权限手册
 
-> 最近更新：2026-08-02
+> 最近更新：2026-08-18
 
 ## Source（读取端）账号
 
@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS mic_sync_batch_receipt (
 
 ## 驱动与验证
 
-- KingbaseES 驱动类：`com.kingbase8.Driver`（JAR 前缀 `kingbase8-`）；
-- openGauss 驱动类：`org.opengauss.Driver`（JAR 前缀 `opengauss-jdbc-`）；
+- KingbaseES 驱动类：`com.kingbase8.Driver`（JAR 前缀 `kingbase8-`，推荐 8.6.0，支持 scram-sha-256 与 md5）；
+- openGauss 驱动类：`org.opengauss.Driver`（JAR 前缀 `opengauss-jdbc-`，推荐 3.0.0）；
+- openGauss 兼容库（如 Vastbase）：`org.postgresql.Driver`（JAR 前缀 `postgresql-`，推荐 42.7.13）；
 - 在 Web UI「数据源」中测试连接，返回产品名/版本/SELECT/事务能力。

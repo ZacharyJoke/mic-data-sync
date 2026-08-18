@@ -49,9 +49,14 @@ public class HttpSinkTransport implements SinkTransport {
         int rowCount = request.payload().rows() == null ? 0 : request.payload().rows().size();
         long start = System.nanoTime();
         try {
-            byte[] body = objectMapper.writeValueAsBytes(Map.of(
-                    "uniqueKeys", request.uniqueKeys() == null ? List.of() : request.uniqueKeys(),
-                    "payload", request.payload()));
+            // 优先复用 Source 侧已序列化并落盘 Spool 的传输字节（含 gzip），
+            // 避免每批二次完整序列化；兼容旧调用方（无传输字节时回退为本地序列化）
+            byte[] body = request.transportBytes().length > 0
+                    ? request.transportBytes()
+                    : objectMapper.writeValueAsBytes(Map.of(
+                            "writeMode", request.writeMode() == null ? "" : request.writeMode(),
+                            "uniqueKeys", request.uniqueKeys() == null ? List.of() : request.uniqueKeys(),
+                            "payload", request.payload()));
             HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(request.sinkUrl() + "/data/receive/"
                             + request.payload().target().table()))
                     .timeout(TIMEOUT)
@@ -64,9 +69,25 @@ public class HttpSinkTransport implements SinkTransport {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             long durationMs = (System.nanoTime() - start) / 1_000_000;
             SinkResponseClassifier.Outcome outcome = classifier.classify(response.statusCode());
-            log.info("sink-send batchId={} rows={} bytes={} status={} outcome={} durationMs={}",
-                    batchId, rowCount, body.length, response.statusCode(), outcome, durationMs);
-            return new SendResult(outcome, response.statusCode(), null, null, durationMs);
+            // 解析 Sink 返回的业务错误摘要（仅 code/message，不记录 Payload 与 Token）
+            String errorCode = null;
+            String errorMessage = null;
+            if (response.statusCode() >= 400) {
+                try {
+                    Map<?, ?> responseBody = objectMapper.readValue(response.body(), Map.class);
+                    if (responseBody.get("code") != null) {
+                        errorCode = String.valueOf(responseBody.get("code"));
+                    }
+                    if (responseBody.get("message") != null) {
+                        errorMessage = String.valueOf(responseBody.get("message"));
+                    }
+                } catch (IOException ignored) {
+                    // 响应体非 JSON 时保留 null，交由调用方按状态码处理
+                }
+            }
+            log.info("sink-send batchId={} rows={} bytes={} status={} outcome={} errorCode={} message={} durationMs={}",
+                    batchId, rowCount, body.length, response.statusCode(), outcome, errorCode, errorMessage, durationMs);
+            return new SendResult(outcome, response.statusCode(), errorCode, errorMessage, durationMs);
         } catch (IOException | InterruptedException ex) {
             long durationMs = (System.nanoTime() - start) / 1_000_000;
             log.warn("sink-send batchId={} rows={} outcome=UNKNOWN error={} durationMs={}",

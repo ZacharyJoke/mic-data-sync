@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { getTargetMetadata, type FieldMapping, type TargetColumn } from '@/api/tasks'
+import {
+  getTargetMetadata,
+  listTargetSchemas,
+  listTargetTables,
+  type FieldMapping,
+  type TargetColumn,
+} from '@/api/tasks'
 import FieldMappingStep from '@/components/task/FieldMappingStep.vue'
 import { useTaskWizardStore } from '@/stores/taskWizard'
 
@@ -13,6 +19,10 @@ const props = withDefaults(defineProps<{ locked?: boolean }>(), {
 const store = useTaskWizardStore()
 const targetColumns = ref<TargetColumn[]>([])
 const targetLoading = ref(false)
+const targetSchemas = ref<string[]>([])
+const targetTables = ref<string[]>([])
+const schemasLoading = ref(false)
+const tablesLoading = ref(false)
 const uniqueKeysInput = ref(store.draft.uniqueKeys.join(','))
 
 const targetSchema = computed({
@@ -27,10 +37,75 @@ const targetTable = computed({
 
 const writeMode = computed({
   get: () => store.draft.writeMode,
-  set: (value: 'UPSERT' | 'INSERT_ONLY') => store.patch({ writeMode: value }),
+  set: (value: 'UPSERT' | 'UPSERT_NO_OVERWRITE' | 'INSERT_ONLY' | 'REPLACE_ALL') =>
+    store.patch({ writeMode: value }),
 })
 
+const showUniqueKeys = computed(
+  () => store.draft.writeMode === 'UPSERT' || store.draft.writeMode === 'UPSERT_NO_OVERWRITE',
+)
+
 const targetColumnNames = computed(() => targetColumns.value.map((column) => column.name))
+
+onMounted(() => {
+  if (store.draft.targetDataSourceId) {
+    void loadTargetSchemas()
+  }
+})
+
+watch(
+  () => store.draft.targetDataSourceId,
+  async (dataSourceId, previous) => {
+    if (previous !== undefined && previous !== '' && previous !== dataSourceId) {
+      targetSchema.value = ''
+      targetTable.value = ''
+      targetColumns.value = []
+    }
+    await loadTargetSchemas()
+  },
+)
+
+watch(targetSchema, async (schema, previous) => {
+  if (previous === undefined) {
+    return
+  }
+  if (previous !== schema) {
+    targetTable.value = ''
+    targetColumns.value = []
+  }
+  await loadTargetTables(schema)
+})
+
+async function loadTargetSchemas() {
+  schemasLoading.value = true
+  try {
+    targetSchemas.value = await listTargetSchemas(store.draft.targetDataSourceId)
+  } catch {
+    ElMessage.error('目标 Schema 列表加载失败')
+    targetSchemas.value = []
+  } finally {
+    schemasLoading.value = false
+  }
+  if (targetSchema.value) {
+    await loadTargetTables(targetSchema.value)
+  }
+}
+
+async function loadTargetTables(schema: string) {
+  if (!schema) {
+    targetTables.value = []
+    return
+  }
+  tablesLoading.value = true
+  try {
+    targetTables.value = await listTargetTables(schema, store.draft.targetDataSourceId)
+  } catch {
+    ElMessage.error('目标表列表加载失败')
+    targetTables.value = []
+  } finally {
+    tablesLoading.value = false
+  }
+}
 
 function applyUniqueKeys() {
   store.patch({
@@ -80,18 +155,33 @@ function onMappingsUpdate(value: FieldMapping[]) {
     <div class="target-mapping-step__grid">
       <label class="target-mapping-step__field">
         目标 Schema
-        <input v-model="targetSchema" type="text" placeholder="public" :disabled="props.locked" />
+        <select
+          v-model="targetSchema"
+          data-test="target-schema-select"
+          :disabled="props.locked || schemasLoading || !store.draft.targetDataSourceId"
+        >
+          <option value="" disabled>请选择</option>
+          <option v-if="targetSchema && !targetSchemas.includes(targetSchema)" :value="targetSchema">
+            {{ targetSchema }}
+          </option>
+          <option v-for="schema in targetSchemas" :key="schema" :value="schema">{{ schema }}</option>
+        </select>
       </label>
       <label class="target-mapping-step__field">
         目标表
-        <input
+        <select
           v-model="targetTable"
-          type="text"
-          data-test="target-table"
+          data-test="target-table-select"
           data-field="targetTable"
-          placeholder="patient_copy"
-          :disabled="props.locked"
-        />
+          :disabled="props.locked || tablesLoading || !targetSchema"
+          @change="loadTargetMetadata"
+        >
+          <option value="" disabled>请选择</option>
+          <option v-if="targetTable && !targetTables.includes(targetTable)" :value="targetTable">
+            {{ targetTable }}
+          </option>
+          <option v-for="table in targetTables" :key="table" :value="table">{{ table }}</option>
+        </select>
       </label>
     </div>
 
@@ -121,11 +211,13 @@ function onMappingsUpdate(value: FieldMapping[]) {
         写入模式
         <select v-model="writeMode" data-field="writeMode" :disabled="props.locked">
           <option value="UPSERT">UPSERT（需唯一 Key）</option>
+          <option value="UPSERT_NO_OVERWRITE">UPSERT_NO_OVERWRITE（冲突跳过，保留目标）</option>
           <option value="INSERT_ONLY">INSERT_ONLY（追加）</option>
+          <option value="REPLACE_ALL">REPLACE_ALL（全量重导，需人工清空目标表）</option>
         </select>
       </label>
-      <label class="target-mapping-step__field">
-        唯一 Key（UPSERT）
+      <label v-if="showUniqueKeys" class="target-mapping-step__field">
+        唯一 Key（UPSERT / UPSERT_NO_OVERWRITE）
         <input
           v-model="uniqueKeysInput"
           type="text"
@@ -135,6 +227,10 @@ function onMappingsUpdate(value: FieldMapping[]) {
           @change="applyUniqueKeys"
         />
       </label>
+    </div>
+    <div v-if="store.draft.writeMode === 'REPLACE_ALL'" class="target-mapping-step__warn" data-test="replace-all-warning">
+      工具不会清空目标表：请先线下清空目标表，任务启动时将校验目标表为空（非空拒绝执行）。
+      该模式仅支持全量同步，不支持增量。
     </div>
   </div>
 </template>
@@ -174,6 +270,16 @@ function onMappingsUpdate(value: FieldMapping[]) {
   border-radius: var(--mic-radius);
   color: var(--mic-text);
   background: var(--mic-surface);
+}
+
+.target-mapping-step__warn {
+  padding: 10px 12px;
+  border: 1px solid var(--mic-border);
+  border-radius: var(--mic-radius);
+  background: var(--mic-surface);
+  color: var(--mic-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .target-mapping-step__mapping {

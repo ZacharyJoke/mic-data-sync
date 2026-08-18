@@ -6,10 +6,12 @@ import com.mic.datasync.database.DatabaseRole;
 import com.mic.datasync.sink.SinkHandshakeService;
 import org.springframework.stereotype.Component;
 
+import java.net.URLEncoder;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -137,6 +139,32 @@ public class AgentClient {
         }
     }
 
+    /** 下发目标 Schema 列表查询到远端 Sink。 */
+    public List<String> listTargetSchemas(EndpointRecord endpoint, String dataSourceId) {
+        AgentProtocol.SchemaList result = get(endpoint,
+                "/api/v1/agent/target/metadata/schemas?dataSourceId=" + encode(dataSourceId),
+                AgentProtocol.SchemaList.class);
+        return result == null ? List.of() : result.schemas();
+    }
+
+    /** 下发指定 Schema 下目标表列表查询到远端 Sink。 */
+    public List<String> listTargetTables(EndpointRecord endpoint, String schema, String dataSourceId) {
+        AgentProtocol.TableList result = get(endpoint,
+                "/api/v1/agent/target/metadata/schemas/" + encode(schema)
+                        + "/tables?dataSourceId=" + encode(dataSourceId),
+                AgentProtocol.TableList.class);
+        return result == null ? List.of() : result.tables();
+    }
+
+    /** 下发目标表元数据查询到远端 Sink。 */
+    public AgentProtocol.TargetTableMetadata readTargetTableMetadata(
+            EndpointRecord endpoint, String schema, String table, String dataSourceId) {
+        return get(endpoint,
+                "/api/v1/agent/target/metadata/" + encode(schema) + "/" + encode(table)
+                        + "?dataSourceId=" + encode(dataSourceId),
+                AgentProtocol.TargetTableMetadata.class);
+    }
+
     /** 查询远端 Sink 令牌掩码状态。 */
     public AgentProtocol.SinkTokenInfo getSinkToken(EndpointRecord endpoint) {
         try {
@@ -155,6 +183,26 @@ public class AgentClient {
             throw ex;
         } catch (Exception ex) {
             throw new IllegalStateException("远端 Sink 令牌查询失败: " + safeMessage(ex), ex);
+        }
+    }
+
+    private <T> T get(EndpointRecord endpoint, String path, Class<T> type) {
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(
+                            URI.create(endpoint.baseUrl() + path))
+                    .timeout(Duration.ofSeconds(10))
+                    .header("Authorization", "Bearer " + endpoint.sinkToken())
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new IllegalStateException("目标元数据 Agent 返回 " + response.statusCode());
+            }
+            return objectMapper.readValue(response.body(), type);
+        } catch (IllegalStateException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("远端目标元数据获取失败: " + safeMessage(ex), ex);
         }
     }
 
@@ -220,5 +268,9 @@ public class AgentClient {
     private String safeMessage(Exception ex) {
         String message = ex.getMessage();
         return message == null ? ex.getClass().getSimpleName() : message;
+    }
+
+    private String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 }

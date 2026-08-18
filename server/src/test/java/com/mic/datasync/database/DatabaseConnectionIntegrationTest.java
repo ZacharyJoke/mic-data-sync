@@ -171,9 +171,18 @@ class DatabaseConnectionIntegrationTest {
 
     @Test
     void driverDirectoryResolutionUsesConfiguredDataDir() {
-        Path driverDir = Path.of(roleProperties.dataDir(), "drivers");
+        Path driverDir = Path.of(roleProperties.driverDir());
         assertThat(driverDir.toString()).startsWith(System.getProperty("java.io.tmpdir"));
         assertThat(Files.isDirectory(driverDir)).isFalse();
+    }
+
+    @Test
+    void driverDirectoryCanBeOverridden() {
+        RoleProperties custom = new RoleProperties(
+                "source,sink", "/tmp/data", "/data/mic-data-sync/drivers",
+                new RoleProperties.Source(10, 1),
+                new RoleProperties.Sink(1000, 16 * 1024 * 1024, false));
+        assertThat(custom.driverDir()).isEqualTo("/data/mic-data-sync/drivers");
     }
 
     private org.springframework.test.web.servlet.ResultActions putSource(String password) throws Exception {

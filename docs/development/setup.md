@@ -64,10 +64,12 @@ npm --prefix web run test:e2e
 
 ## 数据库驱动
 
-开发时把 JDBC 驱动 JAR 放入 `${MIC_SYNC_DATA_DIR}/drivers`：
+分发包默认内置 openGauss / PostgreSQL 驱动；开发时如需替换或补充，把 JDBC 驱动 JAR
+放入 `${MIC_SYNC_DATA_DIR}/drivers`：
 
-- KingbaseES：`kingbase8-*.jar`（驱动类 `com.kingbase8.Driver`）；
-- openGauss：`opengauss-jdbc-*.jar`（驱动类 `org.opengauss.Driver`）。
+- KingbaseES：`kingbase8-8.6.0.jar`（驱动类 `com.kingbase8.Driver`，商业授权需自备）；
+- openGauss：`opengauss-jdbc-3.0.0.jar`（驱动类 `org.opengauss.Driver`）；
+- openGauss 兼容库（如 Vastbase）：`postgresql-42.7.13.jar`（驱动类 `org.postgresql.Driver`）。
 
 ## 提交前检查
 

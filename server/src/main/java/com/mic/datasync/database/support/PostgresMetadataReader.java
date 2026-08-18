@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * PostgreSQL 系数据库（KingbaseES/openGauss）的 JDBC 元数据读取工具。
@@ -48,7 +49,7 @@ public final class PostgresMetadataReader {
     public static List<String> listTables(Connection connection, String schema) throws SQLException {
         DatabaseMetaData meta = connection.getMetaData();
         List<String> tables = new ArrayList<>();
-        try (ResultSet rs = meta.getTables(schema, null, "%", new String[]{"TABLE"})) {
+        try (ResultSet rs = meta.getTables(null, schema, "%", new String[]{"TABLE"})) {
             while (rs.next()) {
                 tables.add(rs.getString("TABLE_NAME"));
             }
@@ -63,7 +64,7 @@ public final class PostgresMetadataReader {
 
         // 字段
         List<ColumnMetadata> columns = new ArrayList<>();
-        try (ResultSet rs = meta.getColumns(schema, null, table, "%")) {
+        try (ResultSet rs = meta.getColumns(null, schema, table, "%")) {
             while (rs.next()) {
                 String name = rs.getString("COLUMN_NAME");
                 int jdbcType = rs.getInt("DATA_TYPE");
@@ -76,7 +77,7 @@ public final class PostgresMetadataReader {
 
         // 主键（按 KEY_SEQ 排序）
         Map<String, Integer> pkSequence = new LinkedHashMap<>();
-        try (ResultSet rs = meta.getPrimaryKeys(schema, null, table)) {
+        try (ResultSet rs = meta.getPrimaryKeys(null, schema, table)) {
             while (rs.next()) {
                 pkSequence.put(rs.getString("COLUMN_NAME"), rs.getInt("KEY_SEQ"));
             }
@@ -94,9 +95,8 @@ public final class PostgresMetadataReader {
 
         // 唯一索引（排除主键）
         List<List<String>> uniqueIndexes = new ArrayList<>();
-        try (ResultSet rs = meta.getIndexInfo(schema, null, table, true, false)) {
-            Map<String, List<String>> indexColumns = new LinkedHashMap<>();
-            Map<String, Integer> indexPositions = new LinkedHashMap<>();
+        try (ResultSet rs = meta.getIndexInfo(null, schema, table, true, false)) {
+            Map<String, TreeMap<Integer, String>> indexColumns = new LinkedHashMap<>();
             while (rs.next()) {
                 String indexName = rs.getString("INDEX_NAME");
                 if (indexName == null) {
@@ -109,11 +109,11 @@ public final class PostgresMetadataReader {
                 if (columnName == null) {
                     continue;
                 }
-                indexColumns.computeIfAbsent(indexName, k -> new ArrayList<>()).add(columnName);
-                indexPositions.put(indexName, rs.getInt("ORDINAL_POSITION"));
+                indexColumns.computeIfAbsent(indexName, k -> new TreeMap<>())
+                        .put(rs.getInt("ORDINAL_POSITION"), columnName);
             }
-            for (Map.Entry<String, List<String>> entry : indexColumns.entrySet()) {
-                List<String> indexed = new ArrayList<>(entry.getValue());
+            for (Map.Entry<String, TreeMap<Integer, String>> entry : indexColumns.entrySet()) {
+                List<String> indexed = new ArrayList<>(entry.getValue().values());
                 // 排除与主键完全一致的唯一索引
                 if (!indexed.equals(primaryKey)) {
                     uniqueIndexes.add(indexed);
@@ -158,9 +158,19 @@ public final class PostgresMetadataReader {
     }
 
     private static boolean isSystemSchema(String schema) {
-        return schema == null || schema.isBlank()
+        if (schema == null || schema.isBlank()
                 || schema.startsWith("pg_")
                 || schema.equals("information_schema")
-                || schema.equals("sys");
+                || schema.equals("sys")) {
+            return true;
+        }
+        // openGauss 系统 Schema
+        return schema.startsWith("dbe_")
+                || schema.equals("blockchain")
+                || schema.equals("cstore")
+                || schema.equals("db4ai")
+                || schema.equals("pkg_service")
+                || schema.equals("snapshot")
+                || schema.equals("sqladvisor");
     }
 }

@@ -6,16 +6,23 @@
 2. Run 引擎创建 Run 记录，先执行 Sink Preflight（TLS、Token、实例身份、协议、Sink 就绪、目标表写入契约）；
 3. 读取源数据库高水位（T0），使用 Keyset 分页按批读取，每批使用短只读事务；
 4. 批次先写入 Source 本地加密 Spool（原子提交），再发送给 Sink；
-5. Sink 在目标数据库事务中执行 UPSERT/INSERT_ONLY 并写入 `mic_sync_batch_receipt` 回执；
+5. Sink 在目标数据库事务中执行 UPSERT / UPSERT_NO_OVERWRITE / INSERT_ONLY / REPLACE_ALL 并写入 `mic_sync_batch_receipt` 回执；
 6. Source 收到成功回执后推进 Checkpoint；
 7. 全量完成后自动执行追赶（Catch-up），把 T0 之后产生的新数据继续增量同步。
 
 ## 手动增量
 
 - 通过任务详情手动触发；
-- 更新时间字段模式：默认回看已确认检查点之前 10 分钟，降低晚提交漏数风险，由目标唯一约束消化跨 Run 重读；
+- 更新时间字段模式（`TIME_WINDOW`）：默认回看已确认检查点之前 10 分钟，降低晚提交漏数风险，由目标唯一约束消化跨 Run 重读；
+- 双阶段模式（`DUAL_PHASE`）：阶段一按主键 Keyset 推进捕获新增（不设时间过滤，避免“新 id 旧时间”漏同步）；阶段二按时间窗口重扫捕获更新；
 - 单调递增唯一 Key 模式：只读取严格大于上次游标的数据；
 - INSERT_ONLY 只允许严格单调递增、全局唯一且不会复用/回拨的源端 Key，不支持更新时间回看。
+
+## REPLACE_ALL 全量重导
+
+- 仅支持全量，不允许增量；首次真正写入批次前校验目标表为空（非空拒绝，错误码 `SINK_TARGET_NOT_EMPTY`）；
+- 使用 OFFSET 快照分页，不依赖唯一键；要求同步期间源表静止；
+- 无主键关联表可通过软唯一键完成冲突定位。
 
 ## 批次幂等
 
@@ -23,7 +30,7 @@
 Source                                Sink
    │ 生成 Batch + Payload Hash           │
    │ 加密 Spool 原子落盘 ───────────────▶│ 校验 Token/身份/协议/写入契约
-   │ 发送                              │ 同事务：业务 UPSERT + 回执
+   │ 发送                              │ 同事务：业务 UPSERT* + 回执
    │ ◀──────── 成功回执 ─────────────── │
    │ 推进 Checkpoint                     │
 ```
@@ -33,11 +40,14 @@ Source                                Sink
 - 事务结果未知（网络中断、超时）：Batch 保持 `UNKNOWN`，Source 必须查询回执或复用原批次身份重发，禁止创建新批次；
 - 每个任务同时只有一个在途批次。
 
+* `UPSERT_NO_OVERWRITE` 冲突时保留目标行并跳过；`INSERT_ONLY` 追加写入；`REPLACE_ALL` 在空表上按批写入。
+
 ## 失败与恢复
 
 | 阶段 | 行为 |
 |---|---|
 | Source 临时故障（连接、超时、重启） | `WAITING_RETRY`，5 次指数退避后每 5 分钟重试，最长 24 小时 |
+| 批次网络/确认类临时故障 | 按退避间隔（30s / 120s / 600s）自动重试 3 次；耗尽后批次 `UNKNOWN`，等待安全重试 |
 | Source 凭据/权限错误 | 暂停，不自动重试，修复后重新检查并继续 |
 | SQL/结构不兼容 | 暂停 Run 与 Task，恢复原结构或保存新任务版本 |
 | Sink 未就绪/过载 | Preflight 失败或 `429 + Retry-After`，修复后继续原批次 |

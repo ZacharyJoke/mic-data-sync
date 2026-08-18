@@ -66,7 +66,7 @@ public class RunQueryService {
                 """, parameters, Long.class);
         List<BatchRecord> items = total == 0 ? List.of() : jdbcTemplate.query("""
                 SELECT batch_id, run_id, batch_sequence, payload_hash, row_count,
-                       status, attempt_count, created_at
+                       time_watermark, status, attempt_count, created_at
                 FROM batch
                 WHERE run_id = :runId
                 ORDER BY batch_sequence
@@ -145,6 +145,7 @@ public class RunQueryService {
                 rs.getLong("batch_sequence"),
                 rs.getString("payload_hash"),
                 rs.getLong("row_count"),
+                rs.getString("time_watermark"),
                 rs.getString("status"),
                 rs.getInt("attempt_count"),
                 rs.getString("created_at"));
@@ -168,6 +169,7 @@ public class RunQueryService {
             long batchSequence,
             String payloadHash,
             long rowCount,
+            String timeWatermark,
             String status,
             int attemptCount,
             String createdAt) {

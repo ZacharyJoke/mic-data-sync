@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- mic-data-sync 日志配置：控制台 + 文件（${dataDir}/logs/app.log，按天滚动，保留 14 天） -->
+<!-- mic-data-sync 日志配置：控制台 + 文件（${log-dir}/app.log，按天滚动，保留 14 天） -->
 <configuration>
-    <!-- 从 application.yml 读取 mic.sync.data-dir -->
-    <springProperty scope="context" name="LOG_DIR" source="mic.sync.data-dir" defaultValue="./data"/>
-    <property name="LOG_FILE" value="${LOG_DIR}/logs/app.log"/>
+    <!-- 从 application.yml 读取 mic.sync.log-dir -->
+    <springProperty scope="context" name="LOG_DIR" source="mic.sync.log-dir" defaultValue="./logs"/>
+    <property name="LOG_FILE" value="${LOG_DIR}/app.log"/>
     <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">

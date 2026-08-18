@@ -8,7 +8,9 @@ import java.util.stream.Collectors;
 /**
  * Writer 侧方言：标识符引用与 UPSERT SQL 生成。
  *
- * <p>KingbaseES 与 openGauss 均支持 PostgreSQL 的 {@code INSERT ... ON CONFLICT} 语法。</p>
+ * <p>默认实现面向 PostgreSQL 系（KingbaseES/Vastbase/PostgreSQL）的
+ * {@code INSERT ... ON CONFLICT} 语法；原生 openGauss 由
+ * {@code OpenGaussTargetAdapter} 覆写为 {@code ON DUPLICATE KEY UPDATE}。</p>
  */
 public interface WriterDialect {
 
@@ -35,6 +37,43 @@ public interface WriterDialect {
      */
     default String buildUpsertSql(String schema, String table, List<String> columns,
                                   List<String> uniqueKeys, Set<String> nonUpdatableColumns) {
+        return buildUpsertSql(schema, table, columns, uniqueKeys, nonUpdatableColumns, false, null, false);
+    }
+
+    /**
+     * 生成批量写入 SQL；{@code skipOnConflict} 为 true 时冲突跳过（保留目标已有行）。
+     *
+     * <p>默认实现面向 PostgreSQL 系（KingbaseES/Vastbase/PostgreSQL）：冲突跳过
+     * 生成不带 {@code conflict_target} 的 {@code ON CONFLICT DO NOTHING}，任意唯一
+     * 约束/唯一索引冲突均跳过该行，避免目标表存在多个唯一索引（如业务唯一键之外
+     * 还有 {@code (hospital_id, study_pk)} 类索引）时撞到非配置键冲突导致整批回滚。
+     * 不支持该语法的数据库（如原生 openGauss）由适配器覆写，并需要
+     * {@code noOpColumn} 生成等价的无操作更新。</p>
+     *
+     * @param schema            目标 Schema（可为空）
+     * @param table             目标表
+     * @param columns           写入字段（顺序固定）
+     * @param uniqueKeys        UPSERT/冲突跳过唯一 Key（为空时退化为普通 INSERT）
+     * @param nonUpdatableColumns 主键/唯一索引列（不参与 SET）
+     * @param skipOnConflict    冲突时跳过（DO NOTHING / 无操作更新）而非覆盖
+     * @param noOpColumn        冲突跳过用于无操作更新的非键列（openGauss 系需要）
+     */
+    default String buildUpsertSql(String schema, String table, List<String> columns,
+                                  List<String> uniqueKeys, Set<String> nonUpdatableColumns,
+                                  boolean skipOnConflict, String noOpColumn) {
+        return buildUpsertSql(schema, table, columns, uniqueKeys, nonUpdatableColumns,
+                skipOnConflict, noOpColumn, false);
+    }
+
+    /**
+     * 生成批量写入 SQL；{@code postgresProtocol} 为 true 表示连接使用
+     * {@code jdbc:postgresql://} 协议（如 PostgreSQL 兼容模式下的 Vastbase），
+     * 冲突处理一律按 PostgreSQL 标准语法生成。
+     */
+    default String buildUpsertSql(String schema, String table, List<String> columns,
+                                  List<String> uniqueKeys, Set<String> nonUpdatableColumns,
+                                  boolean skipOnConflict, String noOpColumn,
+                                  boolean postgresProtocol) {
         String qualifiedTable = (schema == null || schema.isBlank())
                 ? quoteIdentifier(table)
                 : quoteIdentifier(schema) + "." + quoteIdentifier(table);
@@ -42,12 +81,18 @@ public interface WriterDialect {
         String valuePlaceholders = columns.stream().map(c -> "?").collect(Collectors.joining(", "));
         String sql = "INSERT INTO " + qualifiedTable + " (" + columnList + ") VALUES (" + valuePlaceholders + ")";
         if (uniqueKeys != null && !uniqueKeys.isEmpty()) {
-            String conflictColumns = uniqueKeys.stream().map(this::quoteIdentifier).collect(Collectors.joining(", "));
-            String updates = columns.stream()
-                    .filter(c -> !isProtected(c, uniqueKeys, nonUpdatableColumns))
-                    .map(c -> quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
-                    .collect(Collectors.joining(", "));
-            sql += " ON CONFLICT (" + conflictColumns + ") DO UPDATE SET " + updates;
+            if (skipOnConflict) {
+                // 省略 conflict_target：ON CONFLICT DO NOTHING 会跳过违反任何
+                // 唯一约束/唯一索引的行（PostgreSQL 9.5+ 标准行为）
+                sql += " ON CONFLICT DO NOTHING";
+            } else {
+                String conflictColumns = uniqueKeys.stream().map(this::quoteIdentifier).collect(Collectors.joining(", "));
+                String updates = columns.stream()
+                        .filter(c -> !isProtected(c, uniqueKeys, nonUpdatableColumns))
+                        .map(c -> quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
+                        .collect(Collectors.joining(", "));
+                sql += " ON CONFLICT (" + conflictColumns + ") DO UPDATE SET " + updates;
+            }
         }
         return sql;
     }
