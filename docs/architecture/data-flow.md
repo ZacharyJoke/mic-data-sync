@@ -5,6 +5,8 @@
 1. 管理员通过任务详情发起「首次全量」；
 2. Run 引擎创建 Run 记录，先执行 Sink Preflight（TLS、Token、实例身份、协议、Sink 就绪、目标表写入契约）；
 3. 读取源数据库高水位（T0），使用 Keyset 分页按批读取，每批使用短只读事务；
+   - 读取页采用字节预检截断：装入下一行会超过负载上限时提前停止本页，该行由下一页
+     Keyset 续读；每个字节截断页只产出一个完整批次，避免 1 行尾批；
 4. 批次先写入 Source 本地加密 Spool（原子提交），再发送给 Sink；
 5. Sink 在目标数据库事务中执行 UPSERT / UPSERT_NO_OVERWRITE / INSERT_ONLY / REPLACE_ALL 并写入 `mic_sync_batch_receipt` 回执；
 6. Source 收到成功回执后推进 Checkpoint；

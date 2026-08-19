@@ -638,7 +638,7 @@ class RunEngineTest {
     }
 
     @Test
-    void executeQueryStopsAtPayloadByteLimit() throws Exception {
+    void executeQueryPreCheckStopsBeforeOverflowRow() throws Exception {
         when(connection.prepareStatement(anyString())).thenReturn(statement);
         when(statement.executeQuery()).thenReturn(resultSet);
         when(resultSet.getMetaData()).thenReturn(metaData);
@@ -652,9 +652,38 @@ class RunEngineTest {
                 new RunEngine.QuerySpec("SELECT \"name\" FROM t", List.of()),
                 keyOnlyPlan(), 100, 2048);
 
-        // 每行约 1KB：达到 2048 字节上限时在第 2 行截断，truncated=true
+        // 每行约 1KB：预检发现第 2 行会超过 2048 字节，只装入 1 行即截断，
+        // 溢出行留给下一页续读（旧行为是装入 2 行后截断，产生 1 行尾批）
         assertThat(page.truncated()).isTrue();
-        assertThat(page.rows()).hasSize(2);
+        assertThat(page.rows()).hasSize(1);
+    }
+
+    @Test
+    void byteCappedPageProducesSingleBatchWithoutOneRowTail() throws Exception {
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.executeQuery()).thenReturn(resultSet);
+        when(resultSet.getMetaData()).thenReturn(metaData);
+        when(metaData.getColumnCount()).thenReturn(1);
+        when(metaData.getColumnLabel(1)).thenReturn("name");
+        when(metaData.getColumnType(1)).thenReturn(Types.VARCHAR);
+        // 6 行 x 约 1KB：上限 4096 时预检页只装 3 行（3x1026=3078，第 4 行会超限）
+        when(resultSet.next()).thenReturn(true, true, true, true, true, true, false);
+        when(resultSet.getObject(1)).thenReturn("x".repeat(1024));
+
+        RunEngine.PageResult page = engine.executeQuery(connection,
+                new RunEngine.QuerySpec("SELECT \"name\" FROM t", List.of()),
+                keyOnlyPlan(), 100, 4096);
+        assertThat(page.truncated()).isTrue();
+        assertThat(page.rows()).hasSize(3);
+
+        // 页内总字节不超上限时，真实 BatchAssembler 只产出一个完整批次，不再有 1 行尾批
+        List<BatchPayload> batches = new com.mic.datasync.source.BatchAssembler().assemble(
+                Identifiers.InstanceId.generate(), null, null, TASK_ID, RUN_ID,
+                new BatchPayload.TargetTable("public", "patient"),
+                List.of("name"), page.rows().stream().map(RunEngine.RowWithTypes::values).toList(),
+                100, 4096);
+        assertThat(batches).hasSize(1);
+        assertThat(batches.get(0).rows()).hasSize(3);
     }
 
     @Test

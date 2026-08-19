@@ -661,12 +661,20 @@ public class RunEngine {
                         Object raw = rs.getObject(i);
                         normalized.add(rowNormalizer.normalize(raw, logicalTypes.get(i - 1)));
                     }
+                    long rowBytes = BatchAssembler.estimateRowBytes(normalized);
+                    // 页截断（字节预检）：若再加入这一行会超过负载上限，本页提前停止，
+                    // 该行留给下一轮 keyset/OFFSET 续读。避免页内切批时"顶破上限的那一行"
+                    // 单独成为 1 行尾批（每页只产出一个完整批次）。单行本身即超限的
+                    // 巨行仍会单独成页，属正常行为。
+                    if (!rows.isEmpty() && accumulatedBytes + rowBytes > maxPayloadBytes) {
+                        truncated = true;
+                        break;
+                    }
                     rows.add(new RowWithTypes(normalized, columnNames));
-                    accumulatedBytes += BatchAssembler.estimateRowBytes(normalized);
-                    if (rows.size() >= maxRows || accumulatedBytes >= maxPayloadBytes) {
-                        // 页截断：达到单批最大行数或负载字节上限即停止本页，
-                        // 剩余行由下一轮 keyset 续读（取满 maxRows 也标记截断，
-                        // 避免恰好取满时误判读取完成导致漏数据）
+                    accumulatedBytes += rowBytes;
+                    if (rows.size() >= maxRows) {
+                        // 达到单批最大行数即停止本页；取满 maxRows 也标记截断，
+                        // 避免恰好取满时误判读取完成导致漏数据
                         truncated = true;
                         break;
                     }
